@@ -30,7 +30,19 @@ npm run preview
 - Use **Check folding** to check all 181 integer opening angles. Each slider is also sampled at 0%, 50%, and 100%, with other sliders retracted; combinations of independently moving sliders are not exhaustively checked. Select a finding to highlight its parts and jump to its angle. Invalid work remains editable and savable. Geometry that cannot solve retains its last valid preview until repaired.
 - On narrow screens, **Book and mechanisms** and **Properties** open side drawers. The 2D/3D split stacks vertically on phones.
 
+### Illustrated paper cut-outs
+
+Select a panel and choose **Glue image cut-out** to import a transparent PNG. The preview traces opaque regions into editable paper outlines, preserving transparent holes. Disconnected regions are numbered and inserted as separate pieces. Adjust opacity threshold, image width, and contour detail before inserting; the original image stays embedded and registered to its full image rectangle.
+
+The **Scenery** library includes two trees, a castle, and a tower. **Attach to selected panel** uses existing paper; **Insert with mechanism** adds a tuned raised-tent support. **Insert illustrated example** appends a castle-in-the-forest spread. Starter assemblies pass sampled geometric checks but remain **physically untested**.
+
+In the cut-out's 2D placement view, drag the illustration to move it, the round handle to rotate, or the square handle to resize proportionally. The support stays visible. Use **Reshape cut-out** for outline/window vertices, **Draw cut hole** for a new hole, and the glue tools to draw or move a contact patch. **Suggest glue** uses the actual overlapping paper, including holes. Green means the patch fits both pieces; this does not predict adhesive strength. Properties also provide precise transforms, parent selection, duplication, and retracing. Retracing replaces all pieces from that image trace using the selected piece's placement and size; undo restores the previous group.
+
+Cut-outs have printed fronts and plain backs. Templates include full-scale illustrations and holes, matching support guides, and a mirrored reverse-side glue inset. Each rigid piece bonds to one panel in its plane; background removal, arbitrary tilt, and bonding across independently moving panels are outside this feature.
+
 ### Files and recovery
+
+New saves use project format version 2. Version 1 projects migrate on import or local recovery, preserving existing decoration positions and artwork.
 
 The current project autosaves to IndexedDB on this browser and origin. Keep one editing tab open per browser; concurrent tabs do not synchronize edits. Save a portable **.popupbook** file for backup or transfer; clearing browser storage removes the local autosave. The ZIP contains `project.json` and embedded assets. Imports are schema-checked before replacing the open project. Missing assets remain recoverable and are reported by diagnostics. New asset imports have a 90 MB combined budget; project files are limited to 100 MB compressed and 250 MB expanded. Use **Remove unused assets** in book properties to recover space. No accounts or cloud storage are used.
 
@@ -55,7 +67,8 @@ Paper is a rigid, **zero-thickness** model. Diagnostics cover valid outlines, es
 - `src/model.ts` defines the versioned document and import schema; `src/store.ts` owns editing commands and history. Selection, camera, playback and driver values are separate from the document.
 - `src/engine/geometry.ts` provides `compileProject` and `evaluateSpread`; `fabrication.ts` derives joining tabs and matching footprints; `validation.ts` performs diagnostic checks. `media.ts` attaches images and models to solved panels.
 - `src/components` contains the studio surfaces. `src/io` handles portable files, IndexedDB, vector fabrication outputs, and GLB baking. Renderers consume the same geometry and attachment frames, which are reusable by a future AR adapter.
-- Feature-detected WebMCP tools expose `inspect_book`, `add_mechanisms`, and `set_book_drivers`. They invoke the same state and commands as the visible editor; browsers without that proposed API work normally.
+- `src/engine/trace.ts` traces alpha boundaries in a worker; `cutouts.ts` shares hole-aware polygon operations, image registration, transforms, and glue checks. `scenery.ts` supplies original artwork and editable support assemblies.
+- Feature-detected WebMCP tools expose `inspect_book`, `add_mechanisms`, `set_book_drivers`, `insert_scenery`, `glue_image_cutout`, `transform_cutout`, and `edit_cutout_glue`. They invoke the same state and commands as the visible editor; browsers without that proposed API work normally.
 
 `npm test` checks analytic fixtures, full-angle forward/reverse sweeps, rigid edges and joints, nested branches, malformed documents and geometry, storage/history round-trips, tiled PDF scale, and exported GLB poses/animation. Test output files go to the ignored `test-results/` directory. Browser UI and visual PDF checks complement the automated tests.
 

@@ -1,6 +1,10 @@
 import { useEffect } from 'react';
 import { useStudio } from './store';
 import { loadLocal, saveLocal, download, packProject, safeName } from './io/projects';
+import { z } from 'zod';
+import { SCENERY } from './scenery';
+import { insertScenery, insertIllustratedExample } from './sceneryCommands';
+import { traceImage } from './io/trace';
 
 export function usePersistence() {
   useEffect(() => {
@@ -130,7 +134,11 @@ export function useAgentTools() {
             id: p.id,
             name: p.name,
             mechanisms: p.mechanisms,
+            decorations: p.decorations,
+            artwork: p.artwork,
           })),
+          assets: Object.values(s.project.assets).map(({ id, name, mime }) => ({ id, name, mime })),
+          scenery: SCENERY.map(({ id, name }) => ({ id, name })),
           angle: s.angle,
           drivers: s.drivers,
           diagnostics: s.diagnostics,
@@ -207,6 +215,151 @@ export function useAgentTools() {
           playing: false,
         });
         return { angle: useStudio.getState().angle, drivers: useStudio.getState().drivers };
+      },
+    });
+    register({
+      name: 'insert_scenery',
+      description:
+        'Insert illustrated paper scenery with a tuned tent support, attach it to a selected parent ID, or append the worked example spread. Uses the same undoable editor commands as the scenery library.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          itemId: { type: 'string' },
+          parentId: { type: 'string' },
+          example: { type: 'boolean' },
+        },
+      },
+      execute: (input) => {
+        const data = z
+          .object({
+            itemId: z.string().optional(),
+            parentId: z.string().optional(),
+            example: z.boolean().optional(),
+          })
+          .parse(input);
+        if (data.example) return { spreadId: insertIllustratedExample() };
+        if (!data.itemId) throw new Error('Provide a scenery item ID or example:true.');
+        return { partIds: insertScenery(data.itemId, data.parentId) };
+      },
+    });
+    register({
+      name: 'glue_image_cutout',
+      description:
+        'Trace an existing PNG asset into physical paper pieces and glue them onto one existing panel. Returns every disconnected piece ID. No external files are fetched.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          assetId: { type: 'string' },
+          parentId: { type: 'string' },
+          width: { type: 'number', exclusiveMinimum: 0 },
+          threshold: { type: 'number', minimum: 0.01, maximum: 1 },
+          tolerance: { type: 'number', minimum: 0, maximum: 5 },
+        },
+        required: ['assetId', 'parentId'],
+      },
+      execute: async (input) => {
+        const data = z
+          .object({
+            assetId: z.string(),
+            parentId: z.string(),
+            width: z.number().positive().max(2000).optional(),
+            threshold: z.number().min(0.01).max(1).optional(),
+            tolerance: z.number().min(0).max(5).optional(),
+          })
+          .parse(input);
+        const s = useStudio.getState(),
+          asset = s.project.assets[data.assetId];
+        if (!asset) throw new Error('Choose an existing PNG asset ID.');
+        const trace = await traceImage(asset, data),
+          current = useStudio.getState();
+        if (current.project.id !== s.project.id || current.activeSpreadId !== s.activeSpreadId)
+          throw new Error('The destination changed while tracing.');
+        return {
+          partIds: current.insertCutout(asset, trace, data.parentId),
+          warnings: trace.warnings,
+        };
+      },
+    });
+    register({
+      name: 'transform_cutout',
+      description:
+        'Move, rotate in degrees, proportionally resize, or reattach a paper cut-out in millimetres. One atomic undo step; use edit_cutout_glue afterward to recalculate its glue area.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          partId: { type: 'string' },
+          position: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+          rotation: { type: 'number' },
+          scale: { type: 'number', exclusiveMinimum: 0 },
+          parent: { type: 'string' },
+        },
+        required: ['partId'],
+      },
+      execute: (input) => {
+        const { partId, ...transform } = z
+          .object({
+            partId: z.string(),
+            position: z.tuple([z.number().finite(), z.number().finite()]).optional(),
+            rotation: z.number().finite().optional(),
+            scale: z.number().positive().max(100).optional(),
+            parent: z.string().optional(),
+          })
+          .parse(input);
+        useStudio.getState().transformCutout(partId, transform);
+        return { partId };
+      },
+    });
+    register({
+      name: 'edit_cutout_glue',
+      description:
+        'Suggest the cut-out glue region from actual overlap, or set explicitly drawn local millimetre regions. Invalid physical placements remain editable and are diagnosed.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          partId: { type: 'string' },
+          regions: {
+            type: 'array',
+            items: {
+              type: 'object',
+              properties: {
+                outline: {
+                  type: 'array',
+                  items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+                  minItems: 3,
+                },
+                holes: {
+                  type: 'array',
+                  items: {
+                    type: 'array',
+                    items: { type: 'array', items: { type: 'number' }, minItems: 2, maxItems: 2 },
+                  },
+                },
+              },
+              required: ['outline', 'holes'],
+            },
+          },
+        },
+        required: ['partId'],
+      },
+      execute: (input) => {
+        const point = z.tuple([z.number().finite(), z.number().finite()]),
+          data = z
+            .object({
+              partId: z.string(),
+              regions: z
+                .array(
+                  z.object({
+                    outline: z.array(point).min(3),
+                    holes: z.array(z.array(point).min(3)),
+                  }),
+                )
+                .optional(),
+            })
+            .parse(input);
+        const s = useStudio.getState();
+        if (data.regions) s.setCutoutGlue(data.partId, data.regions);
+        else s.suggestCutoutGlue(data.partId);
+        return { partId: data.partId };
       },
     });
     return () => controller.abort();

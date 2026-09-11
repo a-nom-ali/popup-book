@@ -18,8 +18,25 @@ import { partTabs } from '../engine/fabrication';
 import type { Vec2 } from '../model';
 import { uid } from '../model';
 import { useStudio } from '../store';
+import CutoutPlacement from './CutoutPlacement';
 
 export default function FlatEditor({ compiled }: { compiled: CompiledSpread }) {
+  const selectedId = useStudio((s) => s.selectedId);
+  const decoration = compiled.spread.decorations.find((d) => d.id === selectedId);
+  const pose = useMemo(() => evaluateSpread(compiled, 180), [compiled]);
+  if (decoration?.cutout)
+    return (
+      <CutoutPlacement
+        key={decoration.id}
+        compiled={compiled}
+        decoration={decoration}
+        parent={pose.parts.find((p) => p.id === decoration.parent)}
+      />
+    );
+  return <PaperEditor compiled={compiled} />;
+}
+
+function PaperEditor({ compiled }: { compiled: CompiledSpread }) {
   const s = useStudio(),
     svg = useRef<SVGSVGElement>(null),
     drag = useRef<number | null>(null);

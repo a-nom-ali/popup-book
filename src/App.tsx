@@ -49,6 +49,9 @@ import Viewer from './components/Viewer';
 import FlatEditor from './components/FlatEditor';
 import Inspector from './components/Inspector';
 import ExportDialog from './components/ExportDialog';
+import CutoutDialog from './components/CutoutDialog';
+import type { CutoutRequest } from './components/CutoutDialog';
+import SceneryLibrary from './components/SceneryLibrary';
 
 export default function App() {
   usePersistence();
@@ -62,6 +65,8 @@ export default function App() {
     [importing, setImporting] = useState(false);
   const projectInput = useRef<HTMLInputElement>(null),
     assetInput = useRef<HTMLInputElement>(null);
+  const assetKind = useRef<'image' | 'model' | 'cutout'>('image');
+  const [cutoutRequest, setCutoutRequest] = useState<CutoutRequest | null>(null);
   const compiled = useMemo(() => compileProject(s.project, spread.id), [s.project, spread.id]);
   const pose = useMemo(
     () => evaluateSpread(compiled, s.angle, s.drivers),
@@ -90,9 +95,11 @@ export default function App() {
     frame = requestAnimationFrame(step);
     return () => cancelAnimationFrame(frame);
   }, [s.playing]);
-  const importToPart = (kind: 'image' | 'model') => {
+  const importToPart = (kind: 'image' | 'model' | 'cutout') => {
     if (assetInput.current) {
-      assetInput.current.accept = kind === 'image' ? '.png,.jpg,.jpeg' : '.glb';
+      assetKind.current = kind;
+      assetInput.current.accept =
+        kind === 'cutout' ? '.png' : kind === 'image' ? '.png,.jpg,.jpeg' : '.glb';
       assetInput.current.click();
     }
   };
@@ -107,6 +114,12 @@ export default function App() {
           pose.parts.find((p) => p.id === 'page-right')!,
         asset = await importAsset(file);
       assertAssetCapacity(useStudio.getState().project, asset.data);
+      if (assetKind.current === 'cutout') {
+        if (asset.mime !== 'image/png')
+          throw new Error('Choose a PNG image with transparency for a paper cut-out.');
+        setCutoutRequest({ asset, parentId: parent.id, spreadId, projectId });
+        return;
+      }
       let scale = 0.05;
       if (asset.mime === 'model/gltf-binary') {
         const gltf = await new GLTFLoader().parseAsync(
@@ -401,6 +414,10 @@ export default function App() {
               </button>
             ))}
           </div>
+          <SceneryLibrary
+            parentId={pose.parts.find((p) => p.id === s.selectedId)?.id}
+            onInsert={() => setDrawer(null)}
+          />
           <div className="library-tip">
             <Scissors size={16} />
             <p>
@@ -480,6 +497,15 @@ export default function App() {
                 ))}
               </div>
               <div className="toolbar-right">
+                <button
+                  className="icon-button"
+                  disabled={importing}
+                  onClick={() => importToPart('cutout')}
+                  title="Glue image cut-out"
+                  aria-label="Glue image cut-out"
+                >
+                  <Scissors size={17} />
+                </button>
                 <button
                   className="icon-button"
                   disabled={importing}
@@ -664,6 +690,20 @@ export default function App() {
           )}
         </main>
         <Inspector
+          onRetrace={(id) => {
+            const d = spread.decorations.find((d) => d.id === id);
+            const asset = d?.cutout && s.project.assets[d.cutout.assetId];
+            if (d && asset)
+              setCutoutRequest({
+                asset,
+                parentId: d.parent,
+                spreadId: spread.id,
+                projectId: s.project.id,
+                retraceId: id,
+              });
+            else
+              s.set({ notice: 'Original image is missing. Reimport it to create a new cut-out.' });
+          }}
           compiled={compiled}
           pose={pose}
           onImport={importToPart}
@@ -681,6 +721,9 @@ export default function App() {
         </span>
       </footer>
       {exportOpen && <ExportDialog compiled={compiled} onClose={() => setExportOpen(false)} />}
+      {cutoutRequest && (
+        <CutoutDialog request={cutoutRequest} onClose={() => setCutoutRequest(null)} />
+      )}
     </div>
   );
 }

@@ -1922,3 +1922,224 @@ a {
 button[hidden] {
   display: none !important;
 }
+
+.scenery-library {
+  padding: 0 12px 15px;
+}
+.scenery-library .library-heading {
+  padding-left: 4px;
+  padding-right: 4px;
+}
+.scenery-grid {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 9px;
+}
+.scenery-card {
+  min-width: 0;
+  border: 1px solid #4b5d41;
+  border-radius: 8px;
+  overflow: hidden;
+  background: #2b3927;
+  padding: 7px;
+  display: grid;
+  grid-template-columns: 54px 1fr;
+  gap: 4px 8px;
+  align-items: center;
+}
+.scenery-art {
+  height: 94px;
+  border-radius: 4px;
+  display: grid;
+  place-items: center;
+  background: #e8ecdf;
+  grid-row: span 3;
+}
+.scenery-art img {
+  width: 94%;
+  height: 90px;
+  object-fit: contain;
+}
+.scenery-card strong {
+  font-size: 12px;
+  display: block;
+}
+.scenery-card p {
+  display: none;
+}
+.scenery-card button {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 4px;
+  width: 100%;
+  padding: 7px 3px;
+  background: #3d5033;
+  border-radius: 4px;
+  font-size: 10px;
+  line-height: 1.4;
+  margin-top: 5px;
+}
+.scenery-card button:hover {
+  background: #4f6742;
+}
+.scenery-card button:disabled {
+  opacity: 0.4;
+}
+.scenery-card button svg {
+  flex-shrink: 0;
+}
+.scenery-example {
+  margin-top: 12px;
+  display: flex;
+  justify-content: center;
+  gap: 8px;
+  width: 100%;
+  background: #b6cd96;
+  color: #293721;
+  padding: 11px 7px;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.scenery-note {
+  font-size: 10px;
+  line-height: 1.6;
+  color: #9eb18f;
+  text-align: center;
+}
+.cutout-dialog {
+  max-width: 740px;
+}
+.checkerboard {
+  background-color: #f1f0e8;
+  background-image:
+    linear-gradient(45deg, #d9dfd6 25%, transparent 25%),
+    linear-gradient(-45deg, #d9dfd6 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, #d9dfd6 75%),
+    linear-gradient(-45deg, transparent 75%, #d9dfd6 75%);
+  background-size: 20px 20px;
+  background-position:
+    0 0,
+    0 10px,
+    10px -10px,
+    -10px 0;
+}
+.cutout-preview {
+  height: 290px;
+  border-radius: 7px;
+  display: grid;
+  place-items: center;
+  position: relative;
+}
+.cutout-preview svg {
+  height: 94%;
+  width: 94%;
+}
+.trace-busy {
+  position: absolute;
+  bottom: 12px;
+  padding: 9px 15px;
+  display: flex;
+  gap: 8px;
+  background: #273829ec;
+  border-radius: 5px;
+  font-size: 12px;
+}
+.trace-controls {
+  display: grid;
+  grid-template-columns: 1fr 1.2fr 1.2fr;
+  gap: 18px;
+  margin-top: 20px;
+}
+.trace-controls label {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  font-size: 12px;
+  color: #c8d5bf;
+}
+.trace-controls label > div {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.trace-controls input[type='number'],
+.trace-controls select {
+  background: #1e2b1d;
+  color: #dce9d3;
+  border: 1px solid #53694a;
+  border-radius: 4px;
+  padding: 8px;
+  min-width: 0;
+  width: 100%;
+}
+.trace-controls input[type='range'] {
+  width: 100%;
+  min-width: 30px;
+  accent-color: #a9cb8b;
+}
+.preview-toggle {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  margin: 18px 0 10px;
+  font-size: 12px;
+}
+.trace-summary {
+  font-size: 12px;
+  line-height: 1.8;
+  color: #b7c8aa;
+}
+.dialog-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  margin-top: 20px;
+}
+.glue-status {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  bottom: 12px;
+  display: flex;
+  justify-content: space-between;
+  gap: 10px;
+  align-items: center;
+  font-size: 10px;
+  color: #38795b;
+}
+.glue-status.invalid {
+  color: #ad5543;
+}
+.glue-status button {
+  flex-shrink: 0;
+  padding: 5px 8px;
+  border-radius: 4px;
+  background: #dfebd9;
+  color: #456c44;
+}
+.cutout-placement .flat-hint {
+  bottom: 52px;
+}
+.cutout-placement .flat-canvas {
+  height: calc(100% - 142px);
+}
+.cutout-placement .draw-controls {
+  bottom: 48px;
+}
+@media (max-width: 650px) {
+  .trace-controls {
+    grid-template-columns: 1fr;
+    gap: 12px;
+  }
+  .cutout-preview {
+    height: 200px;
+  }
+  .cutout-placement .flat-toolbar .surface-label {
+    max-width: 100%;
+  }
+  .cutout-placement .flat-canvas {
+    top: 86px;
+    height: calc(100% - 156px);
+  }
+}

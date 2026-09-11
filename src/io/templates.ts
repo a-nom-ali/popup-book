@@ -55,6 +55,24 @@ function labelPosition(points: Vec2[]): Vec2 {
   const b = polygonBounds(points);
   return [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2];
 }
+type GlueLabel = { x: number; y: number; width: number; height: number };
+function glueLabelPosition(points: Vec2[], width: number, height: number, used: GlueLabel[]): Vec2 {
+  const [x, centerY] = labelPosition(points);
+  let y = centerY;
+  for (let tries = 0; tries < 30; tries++) {
+    if (
+      !used.some(
+        (label) =>
+          Math.abs(label.x - x) < (label.width + width) / 2 + 0.6 &&
+          Math.abs(label.y - y) < (label.height + height) / 2 + 0.6,
+      )
+    )
+      break;
+    y += height + 1;
+  }
+  used.push({ x, y, width, height });
+  return [x, y];
+}
 export function tileLayout(width: number, height: number, paper: 'A4' | 'Letter') {
   const [pw, ph] = PAPER[paper],
     cw = pw - 20,
@@ -106,7 +124,8 @@ export function exportSVG(compiled: CompiledSpread, diagnostics: Diagnostic[]): 
   for (const [index, entry] of entries.entries()) {
     const l = layout(entry),
       p = entry.part,
-      key = `part${index}`;
+      key = `part${index}`,
+      glueLabels: GlueLabel[] = [];
     body.push(
       `<g transform="translate(10 ${y})"><text x="0" y="0" font-size="5" font-weight="600">${ids.get(p.id)} — ${esc(p.name)}</text><g transform="translate(${l.x} ${l.y + 6})"><defs><clipPath id="${key}"><path d="${[svgPath(p.polygon), ...p.holes.map(svgPath)].join(' ')}" clip-rule="evenodd"/></clipPath></defs><path d="${svgPath(entry.outline)}" fill="${esc(p.color)}" fill-opacity=".16"/>`,
     );
@@ -124,14 +143,18 @@ export function exportSVG(compiled: CompiledSpread, diagnostics: Diagnostic[]): 
       body.push(
         `<path d="M${fold.a.join(',')}L${fold.b.join(',')}" fill="none" stroke="${fold.kind === 'mountain' ? '#7561a8' : '#3d86a1'}" stroke-width=".25" stroke-dasharray="${fold.kind === 'mountain' ? '3 1 .5 1' : '2 1'}"/>`,
       );
-    for (const tab of entry.tabs)
+    for (const tab of entry.tabs) {
+      const label = `GLUE ${ids.get(tab.match ?? '') ?? ''}`,
+        [x, y] = glueLabelPosition(tab.polygon, label.length * 1.4, 2.3, glueLabels);
       body.push(
-        `<path d="${svgPath(tab.polygon)}" fill="url(#hatch)"/><text x="${(tab.polygon[0][0] + tab.polygon[2][0]) / 2}" y="${(tab.polygon[0][1] + tab.polygon[2][1]) / 2}" font-size="2.3" text-anchor="middle" fill="#3d754f">GLUE ${esc(ids.get(tab.match ?? '') ?? '')}</text>`,
+        `<path d="${svgPath(tab.polygon)}" fill="url(#hatch)"/><text x="${x}" y="${y}" font-size="2.3" text-anchor="middle" fill="#3d754f">${esc(label)}</text>`,
       );
+    }
     for (const f of entry.footprints) {
-      const center = labelPosition(f.points);
+      const label = ids.get(f.match) ?? f.match,
+        center = glueLabelPosition(f.points, label.length * 1.5, 2.5, glueLabels);
       body.push(
-        `<path d="${regionPath(f.points, f.holes)}" fill-rule="evenodd" fill="url(#hatch)" stroke="#568664" stroke-width=".2" stroke-dasharray="1 1"/><text x="${center[0]}" y="${center[1]}" font-size="2.5" text-anchor="middle">${esc(ids.get(f.match) ?? f.match)}</text>`,
+        `<path d="${regionPath(f.points, f.holes)}" fill-rule="evenodd" fill="url(#hatch)" stroke="#568664" stroke-width=".2" stroke-dasharray="1 1"/><text x="${center[0]}" y="${center[1]}" font-size="2.5" text-anchor="middle">${esc(label)}</text>`,
       );
     }
     body.push('</g>');
@@ -261,7 +284,8 @@ export async function exportPDF(
   for (const entry of entries) {
     const l = layout(entry),
       p = entry.part,
-      source = master.addPage([l.width * MM, l.height * MM]);
+      source = master.addPage([l.width * MM, l.height * MM]),
+      glueLabels: GlueLabel[] = [];
     const path = (points: Vec2[], color: [number, number, number], fill = false) =>
       source.drawSvgPath(svgPath(points), {
         x: l.x * MM,
@@ -331,8 +355,13 @@ export async function exportPDF(
     };
     const labelGlue = (points: Vec2[], text: string, holes: Vec2[][] = [], border = true) => {
       glue(points, holes, border);
-      const [x, y] = labelPosition(points);
-      const label = printable(text);
+      const label = printable(text),
+        [x, y] = glueLabelPosition(
+          points,
+          masterFont.widthOfTextAtSize(label, 6) / MM,
+          6 / MM,
+          glueLabels,
+        );
       source.drawText(label, {
         x: (x + l.x) * MM - masterFont.widthOfTextAtSize(label, 6) / 2,
         y: (l.height - l.y - y) * MM,

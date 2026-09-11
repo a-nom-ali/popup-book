@@ -17,6 +17,7 @@ import { uid } from '../model';
 import { PRESETS } from '../presets';
 import { assetClipNames } from '../io/assets';
 import { partTabs } from '../engine/fabrication';
+import { polygonBounds } from '../engine/geometry';
 
 export function NumberField({
   label,
@@ -118,11 +119,13 @@ export default function Inspector({
   pose,
   onImport,
   onClose,
+  onRetrace,
 }: {
   compiled: CompiledSpread;
   pose: Pose;
-  onImport: (kind: 'image' | 'model') => void;
+  onImport: (kind: 'image' | 'model' | 'cutout') => void;
   onClose: () => void;
+  onRetrace: (id: string) => void;
 }) {
   const s = useStudio(),
     spread = compiled.spread,
@@ -132,6 +135,26 @@ export default function Inspector({
   );
   const digital = spread.digital.find((d) => d.id === s.selectedId),
     decoration = spread.decorations.find((d) => d.id === s.selectedId);
+  const decorationParent = decoration && pose.parts.find((p) => p.id === decoration.parent);
+  const parentOptions = decoration
+    ? pose.parts.filter((part) => {
+        const seen = new Set<string>([decoration.id]);
+        let ancestor: string | undefined = part.id;
+        while (ancestor) {
+          if (seen.has(ancestor)) return false;
+          seen.add(ancestor);
+          ancestor = spread.decorations.find((d) => d.id === ancestor)?.parent;
+        }
+        return true;
+      })
+    : [];
+  const runCutoutCommand = (command: () => unknown) => {
+    try {
+      command();
+    } catch (error) {
+      s.set({ notice: `Cut-out edit failed: ${(error as Error).message}` });
+    }
+  };
   const edit = (label: string, fn: (spread: typeof compiled.spread, project: Project) => void) =>
     s.edit(label, (p) =>
       fn(
@@ -476,7 +499,7 @@ export default function Inspector({
         </>
       ) : decoration ? (
         <div className="inspector-section">
-          <h3>Paper decoration</h3>
+          <h3>{decoration.cutout ? 'Illustrated cut-out' : 'Paper decoration'}</h3>
           <TextField
             label="Part name"
             value={decoration.name}
@@ -492,18 +515,25 @@ export default function Inspector({
               aria-label="Decoration parent"
               value={decoration.parent}
               onChange={(e) =>
-                edit('Decoration attached', (sp) => {
-                  sp.decorations.find((d) => d.id === decoration.id)!.parent = e.target.value;
-                })
+                decoration.cutout
+                  ? runCutoutCommand(() =>
+                      s.transformCutout(decoration.id, { parent: e.target.value }),
+                    )
+                  : edit('Decoration attached', (sp) => {
+                      sp.decorations.find((d) => d.id === decoration.id)!.parent = e.target.value;
+                    })
               }
             >
-              {pose.parts
-                .filter((p) => p.id !== decoration.id)
-                .map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
+              {!parentOptions.some((p) => p.id === decoration.parent) && (
+                <option value={decoration.parent} disabled>
+                  Missing or invalid support · choose a panel
+                </option>
+              )}
+              {parentOptions.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name}
+                </option>
+              ))}
             </select>
           </label>
           {['X', 'Y'].map((axis, i) => (
@@ -512,12 +542,65 @@ export default function Inspector({
               label={`Offset ${axis}`}
               value={decoration.position[i]}
               onChange={(v) =>
-                edit('Decoration positioned', (sp) => {
-                  sp.decorations.find((d) => d.id === decoration.id)!.position[i] = v;
-                })
+                decoration.cutout
+                  ? s.transformCutout(decoration.id, {
+                      position: decoration.position.map((n, j) => (i === j ? v : n)) as Vec2,
+                    })
+                  : edit('Decoration positioned', (sp) => {
+                      sp.decorations.find((d) => d.id === decoration.id)!.position[i] = v;
+                    })
               }
             />
           ))}
+          {decoration.cutout && (
+            <>
+              <NumberField
+                label="Rotation"
+                unit="°"
+                value={decoration.rotation ?? 0}
+                onChange={(rotation) => s.transformCutout(decoration.id, { rotation })}
+              />
+              <NumberField
+                label="Cut-out width"
+                value={
+                  polygonBounds(decoration.outline).maxX - polygonBounds(decoration.outline).minX
+                }
+                onChange={(width) => {
+                  const b = polygonBounds(decoration.outline);
+                  if (width > 0)
+                    s.transformCutout(decoration.id, {
+                      scale: width / Math.max(0.01, b.maxX - b.minX),
+                    });
+                }}
+              />
+              <p className="small-note">
+                Proportional sizing keeps the illustration, cut holes, and glue area aligned.
+              </p>
+              <div className="paired-buttons">
+                <button onClick={() => s.duplicateCutout(decoration.id)}>Duplicate</button>
+                <button onClick={() => onRetrace(decoration.id)}>Retrace image</button>
+              </div>
+              <button
+                className="text-button"
+                disabled={!decorationParent}
+                onClick={() =>
+                  runCutoutCommand(() => {
+                    s.suggestCutoutGlue(decoration.id);
+                    s.set({ view: 'split' });
+                  })
+                }
+              >
+                Suggest glue from overlap
+              </button>
+              {!decorationParent && (
+                <p className="small-note">Choose an existing support above before defining glue.</p>
+              )}
+              <p className="small-note">
+                Use the 2D placement view to move the piece, rotate it, reshape its edges, or draw a
+                glue area.
+              </p>
+            </>
+          )}
           <label className="property-row">
             <span>Paper color</span>
             <input
@@ -577,7 +660,10 @@ export default function Inspector({
             onClick={() =>
               s.edit('Unused assets removed', (p) => {
                 const used = new Set(
-                  p.spreads.flatMap((sp) => [...sp.artwork, ...sp.digital].map((a) => a.assetId)),
+                  p.spreads.flatMap((sp) => [
+                    ...[...sp.artwork, ...sp.digital].map((a) => a.assetId),
+                    ...sp.decorations.flatMap((d) => (d.cutout ? [d.cutout.assetId] : [])),
+                  ]),
                 );
                 p.assets = Object.fromEntries(
                   Object.entries(p.assets).filter(([id]) => used.has(id)),
@@ -721,6 +807,10 @@ export default function Inspector({
           </div>
           <div className="inspector-section">
             <h3>Artwork</h3>
+            <button className="text-button" onClick={() => onImport('cutout')}>
+              <Scissors size={14} />
+              Glue image cut-out
+            </button>
             <div className="paired-buttons">
               <button onClick={() => onImport('image')}>
                 <ImagePlus size={14} />
@@ -748,19 +838,20 @@ export default function Inspector({
                       <X size={14} />
                     </button>
                   </div>
-                  {(['x', 'y', 'width', 'height'] as const).map((key) => (
-                    <NumberField
-                      key={key}
-                      label={`Image ${key}`}
-                      value={a[key]}
-                      onChange={(v) =>
-                        edit('Artwork positioned', (sp) => {
-                          sp.artwork.find((image) => image.id === a.id)![key] =
-                            key === 'width' || key === 'height' ? Math.max(0.1, v) : v;
-                        })
-                      }
-                    />
-                  ))}
+                  {!decoration?.cutout &&
+                    (['x', 'y', 'width', 'height'] as const).map((key) => (
+                      <NumberField
+                        key={key}
+                        label={`Image ${key}`}
+                        value={a[key]}
+                        onChange={(v) =>
+                          edit('Artwork positioned', (sp) => {
+                            sp.artwork.find((image) => image.id === a.id)![key] =
+                              key === 'width' || key === 'height' ? Math.max(0.1, v) : v;
+                          })
+                        }
+                      />
+                    ))}
                 </div>
               ))}
           </div>
