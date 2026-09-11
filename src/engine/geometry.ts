@@ -6,7 +6,7 @@ export const clamp = (n: number, low: number, high: number) => Math.max(low, Mat
 export interface FoldLine { a: Vec2; b: Vec2; kind: 'mountain' | 'valley' | 'glue'; match?: string; }
 export interface PaperPart {
   id: string; name: string; mechanismId?: string; role: string; polygon: Vec2[]; holes: Vec2[][];
-  color: string; matrix: Matrix4; folds: FoldLine[]; parentIds: string[];
+  color: string; matrix: Matrix4; folds: FoldLine[]; parentIds: string[]; front?: 1 | -1;
 }
 export interface HingePort {
   id: string; origin: Vector3; axis: Vector3; left: Vector3; right: Vector3;
@@ -37,14 +37,15 @@ export function compileProject(project: Project, spreadId: string): CompiledSpre
 }
 
 /** Closed-flat spherical linkage. Input angles in radians; output in the oriented host frame. */
-export function solveVFold(a: number, b: number, g: number, theta: number): Vector3 {
+export function solveVFold(a: number, b: number, g: number, theta: number, branch: 1 | -1 = 1): Vector3 {
   if (!(a > 0 && b > 0 && a < Math.PI / 2 && b < Math.PI / 2 && g > a + b && g < Math.PI)) throw new Error('The ridge angle must exceed the sum of the base angles and remain below 180°.');
   const sg = Math.sin(g), cg = Math.cos(g);
-  if (theta < 1e-12) return new Vector3(sg, cg, 0);
+  if (branch === -1 && Math.abs(a - b) > 1e-9) throw new Error('The exterior V-fold branch currently requires symmetric base angles.');
+  if (theta < 1e-12) return branch === 1 ? new Vector3(sg, cg, 0) : new Vector3(Math.sin(2 * a - g), Math.cos(2 * a - g), 0);
   if (Math.PI - theta < 1e-12) {
     const x = sg * Math.sin(a - b) / Math.sin(a + b);
     const y = cg + 2 * sg * Math.sin(a) * Math.sin(b) / Math.sin(a + b);
-    return new Vector3(x, y, Math.sqrt(Math.max(0, 1 - x * x - y * y)));
+    return new Vector3(x, y, branch * Math.sqrt(Math.max(0, 1 - x * x - y * y)));
   }
   const dh = (a - b) / 2, ah = (a + b) / 2, s2 = Math.sin(theta / 2) ** 2, st = Math.sin(theta);
   const sa = Math.sin(a), sb = Math.sin(b), ca = Math.cos(a), k = 2 * sa * sb * s2;
@@ -55,19 +56,20 @@ export function solveVFold(a: number, b: number, g: number, theta: number): Vect
   const determinant = k * (1 - minus - Math.cos(2 * g - a - b));
   return sum.multiplyScalar(2 * Math.cos(g - ah) * Math.cos(dh) / (2 * plus))
     .addScaledVector(diff, 2 * Math.sin(g - ah) * Math.sin(dh) / (2 * minus))
-    .addScaledVector(cross, Math.sqrt(Math.max(0, determinant)) / (minus * plus));
+    .addScaledVector(cross, branch * Math.sqrt(Math.max(0, determinant)) / (minus * plus));
 }
 
 /** Planar four-bar circle intersection with an explicit closed-flat assembly branch. */
-export function solveTent(left: number, right: number, reach: number, theta: number): Vector2 {
+export function solveTent(left: number, right: number, reach: number, theta: number, branch: 1 | -1 = 1): Vector2 {
   if (!(left > 0 && right > 0 && reach > left + right)) throw new Error('Closed reach must exceed both anchor distances combined.');
-  if (theta < 1e-10) return new Vector2(reach, 0);
+  if (branch === -1 && Math.abs(left - right) > 1e-9) throw new Error('The exterior tent branch currently requires symmetric anchors.');
+  if (theta < 1e-10) return new Vector2(branch === 1 ? reach : left + right - reach, 0);
   const A = new Vector2(left, 0), B = new Vector2(right * Math.cos(theta), right * Math.sin(theta));
   const delta = B.clone().sub(A), d = delta.length(), l = reach - left, r = reach - right;
   const along = (l * l - r * r + d * d) / (2 * d), height2 = l * l - along * along;
   if (height2 < -1e-5) throw new Error('The tent cannot close at this hinge angle.');
   const e = delta.divideScalar(d);
-  return A.addScaledVector(e, along).add(new Vector2(e.y, -e.x).multiplyScalar(Math.sqrt(Math.max(0, height2))));
+  return A.addScaledVector(e, along).add(new Vector2(e.y, -e.x).multiplyScalar(branch * Math.sqrt(Math.max(0, height2))));
 }
 
 function hingeAngle(left: Vector3, right: Vector3, axis: Vector3): number {
@@ -81,7 +83,7 @@ export function evaluateSpread(compiled: CompiledSpread, angle: number, drivers:
   const origin = new Vector3();
   const pagePolygon: Vec2[] = [[0, -project.pageHeight / 2], [project.pageWidth, -project.pageHeight / 2], [project.pageWidth, project.pageHeight / 2], [0, project.pageHeight / 2]];
   parts.push({ id: 'page-left', name: 'Left page', role: 'page', polygon: pagePolygon, holes: [], color: '#f7f4e9', matrix: basis(origin, left, axis), folds: [], parentIds: [] });
-  parts.push({ id: 'page-right', name: 'Right page', role: 'page', polygon: pagePolygon, holes: [], color: '#f7f4e9', matrix: basis(origin, right, axis), folds: [], parentIds: [] });
+  parts.push({ id: 'page-right', name: 'Right page', role: 'page', polygon: pagePolygon, holes: [], color: '#f7f4e9', matrix: basis(origin, right, axis), folds: [], parentIds: [], front: -1 });
   hinges.push({ id: 'spine', origin, axis, left, right, leftPart: 'page-left', rightPart: 'page-right', length: project.pageHeight, angle: theta });
   for (const m of order) {
     try {
@@ -91,11 +93,12 @@ export function evaluateSpread(compiled: CompiledSpread, angle: number, drivers:
         if (!parent) throw new Error('A slider needs an existing paper panel as its host.');
         const raw = drivers[m.id] ?? 0, travel = clamp(raw, 0, 1) * m.stroke;
         if (raw < 0 || raw > 1 || m.stroke < 0 || m.stroke > m.reach - 18) diagnostics.push(diagnostic('slider-travel', `${m.name}: keep the strip engaged in both guides throughout its travel.`, [m.id], angle));
-        const mat = parent.matrix.clone().multiply(new Matrix4().makeTranslation(m.left + travel, m.offset, 0.12));
-        parts.push({ id: `${m.id}:strip`, name: m.name, mechanismId: m.id, role: 'strip', polygon: m.outlines.strip ?? rect(m.reach, m.width), holes: m.cutouts.strip ?? [], color: m.color, matrix: mat, folds: [], parentIds: [parent.id] });
+        const mat = parent.matrix.clone().multiply(new Matrix4().makeTranslation(m.left + travel, m.offset, (parent.front ?? 1) * 0.12));
+        const strip: Vec2[] = [[0, -4], [3, -4], [3, 0], [m.reach - 3, 0], [m.reach - 3, -4], [m.reach, -4], [m.reach, m.width + 4], [m.reach - 3, m.width + 4], [m.reach - 3, m.width], [3, m.width], [3, m.width + 4], [0, m.width + 4]];
+        parts.push({ id: `${m.id}:strip`, name: m.name, mechanismId: m.id, role: 'strip', polygon: m.outlines.strip ?? strip, holes: m.cutouts.strip ?? [], color: m.color, matrix: mat, folds: [], parentIds: [parent.id], front: parent.front });
         for (let i = 0; i < 2; i++) {
-          const guideX = m.left + m.stroke + 3 + i * 9;
-          parts.push({ id: `${m.id}:guide${i}`, name: `${m.name} guide ${i + 1}`, mechanismId: m.id, role: `guide${i}`, polygon: rect(5, m.width + 12), holes: [], color: '#e6dfca', matrix: parent.matrix.clone().multiply(new Matrix4().makeTranslation(guideX, m.offset - 6, 0.3)), folds: [{ a: [0, 6], b: [5, 6], kind: 'glue', match: parent.id }, { a: [0, m.width + 6], b: [5, m.width + 6], kind: 'glue', match: parent.id }], parentIds: [parent.id] });
+          const guideX = m.left + (i === 0 ? m.stroke + 3 : m.reach - 8);
+          parts.push({ id: `${m.id}:guide${i}`, name: `${m.name} guide ${i + 1}`, mechanismId: m.id, role: `guide${i}`, polygon: rect(5, m.width + 12), holes: [], color: '#e6dfca', matrix: parent.matrix.clone().multiply(new Matrix4().makeTranslation(guideX, m.offset - 6, (parent.front ?? 1) * 0.3)), folds: [{ a: [0, 6], b: [5, 6], kind: 'glue', match: parent.id }, { a: [0, m.width + 6], b: [5, m.width + 6], kind: 'glue', match: parent.id }], parentIds: [parent.id] });
         }
         continue;
       }
@@ -106,8 +109,7 @@ export function evaluateSpread(compiled: CompiledSpread, angle: number, drivers:
       const at = host.origin.clone().addScaledVector(host.axis, m.offset);
       if (m.kind === 'vfold') {
         const a = rad(m.alpha), b = rad(m.alpha), g = rad(m.alpha + m.beta);
-        const localRidge = solveVFold(a, b, g, hAngle);
-        if (m.branch === -1) throw new Error('Only the outward, closed-flat V-fold branch is supported.');
+        const localRidge = solveVFold(a, b, g, hAngle, m.branch);
         const ridge = host.left.clone().multiplyScalar(localRidge.x).addScaledVector(host.axis, localRidge.y).addScaledVector(hZ, localRidge.z).normalize();
         const uL = host.left.clone().multiplyScalar(Math.sin(a)).addScaledVector(host.axis, Math.cos(a));
         const uR = host.right.clone().multiplyScalar(Math.sin(b)).addScaledVector(host.axis, Math.cos(b));
@@ -116,10 +118,11 @@ export function evaluateSpread(compiled: CompiledSpread, angle: number, drivers:
           const y = ridge.clone().addScaledVector(u, -Math.cos(sector)).divideScalar(Math.sin(sector));
           parts.push({ id: `${m.id}:${role}`, name: `${m.name} · ${role}`, mechanismId: m.id, role, polygon: m.outlines[role] ?? wedge, holes: m.cutouts[role] ?? [], color: m.color, matrix: basis(at, u, y), folds: [{ a: [0, 0], b: [m.width, 0], kind: 'valley', match: parent }, { a: [0, 0], b: wedge[2], kind: 'mountain', match: `${m.id}:${role === 'left' ? 'right' : 'left'}` }], parentIds: [parent] });
         }
-        const l = uR.clone().addScaledVector(ridge, -Math.cos(sector)).normalize(), r = uL.clone().addScaledVector(ridge, -Math.cos(sector)).normalize();
-        hinges.push({ id: `${m.id}:ridge`, origin: at, axis: ridge, left: l, right: r, leftPart: `${m.id}:right`, rightPart: `${m.id}:left`, length: m.reach, angle: hingeAngle(l, r, ridge) });
+        const first = m.branch === 1 ? uR : uL, second = m.branch === 1 ? uL : uR;
+        const l = first.clone().addScaledVector(ridge, -Math.cos(sector)).normalize(), r = second.clone().addScaledVector(ridge, -Math.cos(sector)).normalize();
+        hinges.push({ id: `${m.id}:ridge`, origin: at, axis: ridge, left: l, right: r, leftPart: `${m.id}:${m.branch === 1 ? 'right' : 'left'}`, rightPart: `${m.id}:${m.branch === 1 ? 'left' : 'right'}`, length: m.reach, angle: hingeAngle(l, r, ridge) });
       } else {
-        const ridge2 = solveTent(m.left, m.right, m.reach, hAngle);
+        const ridge2 = solveTent(m.left, m.right, m.reach, hAngle, m.branch);
         const ridgeAt = at.clone().addScaledVector(host.left, ridge2.x).addScaledVector(hZ, ridge2.y);
         const AL = at.clone().addScaledVector(host.left, m.left), AR = at.clone().addScaledVector(host.right, m.right);
         const dL = ridgeAt.clone().sub(AL).normalize(), dR = ridgeAt.clone().sub(AR).normalize();
@@ -127,15 +130,15 @@ export function evaluateSpread(compiled: CompiledSpread, angle: number, drivers:
           const polygon: Vec2[] = [[0, -m.width / 2], [len, -m.width / 2], [len, m.width / 2], [0, m.width / 2]];
           parts.push({ id: `${m.id}:${role}`, name: `${m.name} · ${role}`, mechanismId: m.id, role, polygon: m.outlines[role] ?? polygon, holes: m.cutouts[role] ?? [], color: m.color, matrix: basis(anchor, away, host.axis), folds: [{ a: [0, -m.width / 2], b: [0, m.width / 2], kind: 'valley', match: parent }, { a: [len, -m.width / 2], b: [len, m.width / 2], kind: 'mountain', match: `${m.id}:${role === 'left' ? 'right' : 'left'}` }], parentIds: [parent] });
         }
-        const l = dR.clone().negate(), r = dL.clone().negate();
-        hinges.push({ id: `${m.id}:ridge`, origin: ridgeAt, axis: host.axis.clone(), left: l, right: r, leftPart: `${m.id}:right`, rightPart: `${m.id}:left`, length: m.width, angle: hingeAngle(l, r, host.axis) });
+        const l = (m.branch === 1 ? dR : dL).clone().negate(), r = (m.branch === 1 ? dL : dR).clone().negate();
+        hinges.push({ id: `${m.id}:ridge`, origin: ridgeAt, axis: host.axis.clone(), left: l, right: r, leftPart: `${m.id}:${m.branch === 1 ? 'right' : 'left'}`, rightPart: `${m.id}:${m.branch === 1 ? 'left' : 'right'}`, length: m.width, angle: hingeAngle(l, r, host.axis) });
       }
     } catch (error) { diagnostics.push(diagnostic('unsolved', `${m.name}: ${error instanceof Error ? error.message : String(error)}`, [m.id], angle)); }
   }
   for (const d of spread.decorations) {
     const parent = parts.find(p => p.id === d.parent);
     if (!parent) { diagnostics.push(diagnostic('missing-host', `${d.name} has a missing parent.`, [d.id])); continue; }
-    parts.push({ id: d.id, name: d.name, role: 'decoration', polygon: d.outline, holes: d.holes, color: d.color, matrix: parent.matrix.clone().multiply(new Matrix4().makeTranslation(d.position[0], d.position[1], 0.05)), folds: [], parentIds: [d.parent] });
+    parts.push({ id: d.id, name: d.name, role: 'decoration', polygon: d.outline, holes: d.holes, color: d.color, matrix: parent.matrix.clone().multiply(new Matrix4().makeTranslation(d.position[0], d.position[1], (parent.front ?? 1) * 0.05)), folds: [], parentIds: [d.parent], front: parent.front });
   }
   return { parts, hinges, diagnostics, angle };
 }

@@ -19,13 +19,13 @@ export function createPreset(kind: PresetKind, host = 'spine', offset = 0): Mech
   if (kind === 'vfold' || kind === 'tent' || kind === 'slider') return [mechanism(kind, { host: kind === 'slider' && host === 'spine' ? 'page-right' : host, offset })];
   if (kind === 'bloom') {
     const base = mechanism('vfold', { host, offset, name: 'Calyx', width: 92, reach: 106, alpha: 32, beta: 68, color: '#72955f' });
-    const middle = mechanism('vfold', { host: `${base.id}:ridge`, offset: 20, name: 'Outer petals', width: 56, reach: 69, alpha: 31, beta: 62, color: '#ebb3ad' });
-    const inner = mechanism('vfold', { host: `${middle.id}:ridge`, offset: 10, name: 'Inner petals', width: 30, reach: 38, alpha: 30, beta: 58, color: '#e9cf94' });
+    const middle = mechanism('vfold', { host: `${base.id}:ridge`, offset: 20, name: 'Outer petals', width: 45, reach: 57, alpha: 31, beta: 62, branch: -1, color: '#ebb3ad' });
+    const inner = mechanism('vfold', { host: `${middle.id}:ridge`, offset: 9, name: 'Inner petals', width: 24, reach: 32, alpha: 30, beta: 58, branch: -1, color: '#e9cf94' });
     return [base, middle, inner];
   }
   if (kind === 'pavilion') {
     const base = mechanism('tent', { host, offset, name: 'Pavilion walls', left: 32, right: 32, reach: 88, width: 78, color: '#b9cad1' });
-    const roof = mechanism('tent', { host: `${base.id}:ridge`, offset: 0, name: 'Upper roof', left: 12, right: 12, reach: 34, width: 54, color: '#cf8b72' });
+    const roof = mechanism('tent', { host: `${base.id}:ridge`, offset: 0, name: 'Upper roof', left: 12, right: 12, reach: 34, width: 54, branch: -1, color: '#cf8b72' });
     return [base, roof];
   }
   return [
