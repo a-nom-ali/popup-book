@@ -25,6 +25,7 @@ export default function FlatEditor({ compiled }: { compiled: CompiledSpread }) {
     drag = useRef<number | null>(null);
   const [drawing, setDrawing] = useState<Vec2[]>([]),
     [zoom, setZoom] = useState(1);
+  const [dragViewport, setDragViewport] = useState<string | null>(null);
   const pose = useMemo(() => evaluateSpread(compiled, 180), [compiled]);
   const part =
     pose.parts.find((p) => p.id === s.selectedId) ?? pose.parts.find((p) => p.id === 'page-right')!;
@@ -85,6 +86,7 @@ export default function FlatEditor({ compiled }: { compiled: CompiledSpread }) {
   };
   const endDrag = () => {
     drag.current = null;
+    setDragViewport(null);
   };
   const images = compiled.spread.artwork.filter((a) => a.partId === part.id);
   const tabs = partTabs(part, compiled);
@@ -140,7 +142,7 @@ export default function FlatEditor({ compiled }: { compiled: CompiledSpread }) {
       <svg
         ref={svg}
         className="flat-canvas"
-        viewBox={`${vx} ${vy} ${vw} ${vh}`}
+        viewBox={dragViewport ?? `${vx} ${vy} ${vw} ${vh}`}
         onPointerDown={onPointerDown}
         onPointerMove={onMove}
         onPointerUp={endDrag}
@@ -225,7 +227,7 @@ export default function FlatEditor({ compiled }: { compiled: CompiledSpread }) {
           fontSize="3"
           fill="#65775a"
         >
-          {Math.round(w * 10) / 10} mm
+          {Math.round((bounds.maxX - bounds.minX) * 10) / 10} mm
         </text>
         {editable &&
           s.tool === 'select' &&
@@ -243,6 +245,7 @@ export default function FlatEditor({ compiled }: { compiled: CompiledSpread }) {
               onPointerDown={(e) => {
                 e.stopPropagation();
                 s.checkpoint();
+                setDragViewport(`${vx} ${vy} ${vw} ${vh}`);
                 drag.current = i;
                 svg.current!.setPointerCapture(e.pointerId);
               }}

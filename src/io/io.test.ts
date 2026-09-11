@@ -144,11 +144,24 @@ describe('fabrication export', () => {
     const tabs = partTabs(pose.parts[2], compiled);
     expect(tabs.length).toBe(2);
     expect(entries[0].footprints.length).toBeGreaterThan(0);
+    p.spreads[0].digital.push({
+      id: 'exclude-digital',
+      name: 'DIGITAL_ONLY_FIXTURE',
+      assetId: 'absent-digital',
+      parent: 'page-left',
+      position: [0, 0, 0],
+      rotation: [0, 0, 0],
+      scale: 1,
+      behavior: 'loop',
+      clip: 0,
+      angleStart: 0,
+      angleEnd: 180,
+    });
     const svg = exportSVG(compiled, []);
     expect(svg).toContain('width="20" height="20"');
     expect(svg).toContain('GLUE P');
     expect(svg).toContain('clip-rule="evenodd"');
-    expect(svg).not.toContain('digital_');
+    expect(svg).not.toContain('DIGITAL_ONLY_FIXTURE');
     const bytes = await exportPDF(compiled, [], 'A4'),
       pdf = await PDFDocument.load(bytes);
     expect(pdf.getPageCount()).toBeGreaterThanOrEqual(entries.length + 1);
@@ -271,6 +284,7 @@ describe('GLB geometry and animation', () => {
       angleStart: 30,
       angleEnd: 150,
     });
+    expect(unpackProject(packProject(p))).toEqual(p);
     const compiled = compileProject(p, s.id),
       loaded = await loadMedia(compiled, evaluateSpread(compiled, 180));
     expect(loaded.errors).toEqual([]);
@@ -287,6 +301,12 @@ describe('GLB geometry and animation', () => {
       updateMedia(loaded.attachments, evaluateSpread(compiled, angle), 0);
       expect(object.position.y).toBeCloseTo(expected, 6);
     }
+    s.digital[0].angleStart = 100;
+    s.digital[0].angleEnd = 100.5;
+    updateMedia(loaded.attachments, evaluateSpread(compiled, 100.25), 0);
+    expect(object.position.y).toBeCloseTo(0.04, 6);
+    updateMedia(loaded.attachments, evaluateSpread(compiled, 100.5), 0);
+    expect(object.position.y).toBeCloseTo(0.06, 6);
     const exported = await exportGLB(compiled, 180, true, {});
     expect(inspectGLB(new Uint8Array(exported)).clips).toEqual(['Open book']);
   });

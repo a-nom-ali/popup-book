@@ -65,6 +65,7 @@ export function createPreset(kind: PresetKind, host = 'spine', offset = 0): Mech
   if (kind === 'vfold' || kind === 'tent' || kind === 'slider')
     return [
       mechanism(kind, {
+        ...(kind === 'slider' ? { reach: 75, stroke: 30 } : {}),
         host: kind === 'slider' && host === 'spine' ? 'page-right' : host,
         offset,
       }),

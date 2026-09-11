@@ -35,6 +35,15 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
     renderer.toneMapping = THREE.ACESFilmicToneMapping;
     renderer.toneMappingExposure = 1.3;
     el.appendChild(renderer.domElement);
+    const contextLost = (event: Event) => {
+      event.preventDefault();
+      setError(
+        'The graphics context was lost. Your project is safe; continue in 2D or reload the viewer.',
+      );
+    };
+    const contextRestored = () => setError('');
+    renderer.domElement.addEventListener('webglcontextlost', contextLost);
+    renderer.domElement.addEventListener('webglcontextrestored', contextRestored);
     const scene = new THREE.Scene(),
       camera = new THREE.PerspectiveCamera(34, 1, 0.1, 5000);
     camera.up.set(0, 0, 1);
@@ -122,12 +131,10 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
         }
       }
       const id = hit?.object.userData.partId as string | undefined;
-      useStudio
-        .getState()
-        .set({
-          selectedId:
-            digitalId ?? (id?.includes(':tab') ? id.slice(0, id.lastIndexOf(':tab')) : id) ?? null,
-        });
+      useStudio.getState().set({
+        selectedId:
+          digitalId ?? (id?.includes(':tab') ? id.slice(0, id.lastIndexOf(':tab')) : id) ?? null,
+      });
     };
     renderer.domElement.addEventListener('pointerdown', pointerDown);
     renderer.domElement.addEventListener('pointerup', pick);
@@ -206,6 +213,8 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
       controls.dispose();
       renderer.domElement.removeEventListener('pointerdown', pointerDown);
       renderer.domElement.removeEventListener('pointerup', pick);
+      renderer.domElement.removeEventListener('webglcontextlost', contextLost);
+      renderer.domElement.removeEventListener('webglcontextrestored', contextRestored);
       disposeObject(scene);
       renderer.dispose();
       renderer.domElement.remove();

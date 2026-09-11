@@ -233,7 +233,7 @@ export default function App() {
         <button
           className="project-title"
           onClick={() => {
-            s.set({ selectedId: null });
+            s.set({ selectedId: null, reader: false });
             setDrawer('properties');
           }}
           title="Edit book details"
@@ -271,7 +271,11 @@ export default function App() {
           </button>
           <button
             className={`button subtle reader-button ${s.reader ? 'active' : ''}`}
-            onClick={() => s.set({ reader: !s.reader })}
+            onClick={() => {
+              setDrawer(null);
+              setIssuesOpen(false);
+              s.set({ reader: !s.reader });
+            }}
           >
             <BookOpen size={16} />
             {s.reader ? 'Edit book' : 'Read book'}
@@ -419,6 +423,7 @@ export default function App() {
             <div className="document-actions">
               <button
                 className="icon-button book-toggle"
+                hidden={s.reader}
                 onClick={() => setDrawer('book')}
                 title="Book and mechanisms"
                 aria-label="Book and mechanisms"
@@ -448,6 +453,7 @@ export default function App() {
                 onClick={() => setDrawer('properties')}
                 title="Properties"
                 aria-label="Properties"
+                hidden={s.reader}
               >
                 <Settings2 size={19} />
               </button>
@@ -566,6 +572,29 @@ export default function App() {
               <span>°</span>
             </output>
           </div>
+          {s.reader && spread.mechanisms.some((m) => m.kind === 'slider') && (
+            <div className="reader-pulls">
+              {spread.mechanisms
+                .filter((m) => m.kind === 'slider')
+                .map((m) => (
+                  <label key={m.id}>
+                    <span>{m.name}</span>
+                    <input
+                      aria-label={`Pull ${m.name}`}
+                      type="range"
+                      min="0"
+                      max="1"
+                      step=".01"
+                      value={s.drivers[m.id] ?? 0}
+                      onChange={(e) =>
+                        s.set({ drivers: { ...s.drivers, [m.id]: +e.target.value } })
+                      }
+                    />
+                    <output>{Math.round((s.drivers[m.id] ?? 0) * 100)}%</output>
+                  </label>
+                ))}
+            </div>
+          )}
           <div className="workspace-footer">
             <span>
               {pose.parts.length - 2} paper parts <span className="muted">·</span>{' '}
@@ -583,7 +612,7 @@ export default function App() {
             <section className="issues-panel" aria-label="Folding diagnostics">
               <div>
                 <strong>Sampled geometry check</strong>
-                <span>181 angles · zero-thickness paper · not a physical certification</span>
+                <span>181 angles · zero-thickness paper · not physically tested</span>
                 <button
                   className="icon-button"
                   aria-label="Close diagnostics"
@@ -594,6 +623,11 @@ export default function App() {
               </div>
               {s.checking ? (
                 <p>Checking attachments, closure, and intersections…</p>
+              ) : !s.checked ? (
+                <p>
+                  This design has changed or has not been checked. Run Check folding for current
+                  results.
+                </p>
               ) : s.diagnostics.length ? (
                 <ul>
                   {s.diagnostics.map((d) => (
@@ -622,6 +656,9 @@ export default function App() {
                   No issue detected at the tested angles. Make a paper prototype before final
                   fabrication.
                 </p>
+              )}
+              {s.checked && spread.mechanisms.some((m) => m.kind === 'slider') && (
+                <p>Each slider sampled at 0%, 50%, and 100%, with the other sliders retracted.</p>
               )}
             </section>
           )}

@@ -209,7 +209,7 @@ export function updateMedia(
       time =
         Math.min(
           1,
-          Math.max(0, (pose.angle - d.angleStart) / Math.max(1, d.angleEnd - d.angleStart)),
+          Math.max(0, (pose.angle - d.angleStart) / Math.max(1e-6, d.angleEnd - d.angleStart)),
         ) * a.duration;
     else if (d.behavior === 'loop') time = a.elapsed % a.duration;
     else if (a.clicked) time = Math.min(a.elapsed, a.duration);

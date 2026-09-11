@@ -36,10 +36,10 @@ const printable = (s: string) =>
 function layout(entry: TemplatePart) {
   const b = polygonBounds(entry.outline);
   return {
-    x: 10 - b.minX,
-    y: 10 - b.minY,
-    width: b.maxX - b.minX + 20,
-    height: b.maxY - b.minY + 20,
+    x: 5 - b.minX,
+    y: 5 - b.minY,
+    width: b.maxX - b.minX + 10,
+    height: b.maxY - b.minY + 10,
   };
 }
 export function tileLayout(width: number, height: number, paper: 'A4' | 'Letter') {

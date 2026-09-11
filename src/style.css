@@ -1891,3 +1891,34 @@ a {
     scroll-behavior: auto !important;
   }
 }
+.reader-pulls {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px 32px;
+  padding: 12px 28px;
+  background: #e8ecdf;
+  border-top: 1px solid #cfd7c6;
+  max-height: 130px;
+  overflow: auto;
+}
+.reader-pulls label {
+  display: flex;
+  gap: 14px;
+  align-items: center;
+  flex: 1 1 260px;
+  font-size: 13px;
+  color: #405139;
+}
+.reader-pulls input {
+  flex: 1;
+  min-width: 60px;
+  accent-color: #72955f;
+}
+.reader-pulls output {
+  width: 38px;
+  font-variant-numeric: tabular-nums;
+}
+
+button[hidden] {
+  display: none !important;
+}

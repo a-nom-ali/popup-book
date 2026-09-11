@@ -19,12 +19,10 @@ export function usePersistence() {
         })
         .catch((error) => {
           if (alive)
-            useStudio
-              .getState()
-              .set({
-                saveStatus: 'Save failed',
-                notice: `Local save failed: ${error.message}. Download a project file to keep your work.`,
-              });
+            useStudio.getState().set({
+              saveStatus: 'Save failed',
+              notice: `Local save failed: ${error.message}. Download a project file to keep your work.`,
+            });
         });
     };
     loadLocal()
@@ -37,12 +35,10 @@ export function usePersistence() {
       })
       .catch((error) => {
         if (alive)
-          useStudio
-            .getState()
-            .set({
-              saveStatus: 'Storage unavailable',
-              notice: `Local recovery failed: ${error.message}. You can still open or download project files.`,
-            });
+          useStudio.getState().set({
+            saveStatus: 'Storage unavailable',
+            notice: `Local recovery failed: ${error.message}. You can still open or download project files.`,
+          });
       })
       .finally(() => {
         if (!alive) return;

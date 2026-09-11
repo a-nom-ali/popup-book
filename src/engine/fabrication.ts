@@ -106,6 +106,15 @@ export function templateParts(compiled: CompiledSpread, pose: Pose): TemplatePar
       w = guide.part.folds[0].b[0],
       h = guide.part.folds[1].a[1] + 6;
     for (const y of [0, h - 6]) {
+      guide.footprints.push({
+        points: [
+          [0, y],
+          [w, y],
+          [w, y + 6],
+          [0, y + 6],
+        ],
+        match: target.part.id,
+      });
       const points = [
         [0, y],
         [w, y],

@@ -25,14 +25,14 @@ npm run preview
 - Click a paper part in 3D or the Structure tree. Adjust its dimensions, fold angles, attachment, color, or assembly side. **Build on this fold** mounts a child across the selected ridge.
 - Switch to **2D pattern** or **Split**. Drag outline vertices; use **Vertex** to add one and double-click a vertex to remove it. **Draw paper part** creates a rigid decoration on the selected panel. **Draw cutout** removes a polygon from an editable part. Click **Finish** to close a drawing.
 - Generated joining tabs appear in the 2D view and fabrication sheets. Add custom tabs by choosing an outline edge in the inspector. Custom shapes retain their geometry when supported dimensions change.
-- Scrub **Book opening**, press Space to play/pause, or use **Read book** and previous/next controls. Pull tabs have an independent travel slider in their properties.
+- Scrub **Book opening**, press Space to play/pause, or use **Read book** and previous/next controls. Pull tabs have independent travel sliders in their properties and in reader mode.
 - Import PNG/JPEG artwork or an uncompressed, self-contained GLB onto the selected panel. Imported models fit to roughly 50 mm initially; adjust their transform and choose loop, click, or opening-angle playback. Standard GLB clips, including skeletal and morph animations, are supported by Three.js; custom material animation extensions and compressed assets requiring decoders are outside this prototype.
-- Use **Check folding** to check all 181 integer opening angles. Select a finding to highlight its parts and jump to its angle. Invalid work remains editable and savable. Geometry that cannot solve retains its last valid preview until repaired.
+- Use **Check folding** to check all 181 integer opening angles. Each slider is also sampled at 0%, 50%, and 100%, with other sliders retracted; combinations of independently moving sliders are not exhaustively checked. Select a finding to highlight its parts and jump to its angle. Invalid work remains editable and savable. Geometry that cannot solve retains its last valid preview until repaired.
 - On narrow screens, **Book and mechanisms** and **Properties** open side drawers. The 2D/3D split stacks vertically on phones.
 
 ### Files and recovery
 
-The current project autosaves to IndexedDB on this browser and origin. Save a portable **.popupbook** file for backup or transfer; clearing browser storage removes the local autosave. The ZIP contains `project.json` and embedded assets. Imports are schema-checked before replacing the open project. Missing assets remain recoverable and are reported by diagnostics. No accounts or cloud storage are used.
+The current project autosaves to IndexedDB on this browser and origin. Keep one editing tab open per browser; concurrent tabs do not synchronize edits. Save a portable **.popupbook** file for backup or transfer; clearing browser storage removes the local autosave. The ZIP contains `project.json` and embedded assets. Imports are schema-checked before replacing the open project. Missing assets remain recoverable and are reported by diagnostics. New asset imports have a 90 MB combined budget; project files are limited to 100 MB compressed and 250 MB expanded. Use **Remove unused assets** in book properties to recover space. No accounts or cloud storage are used.
 
 Ctrl/Cmd+S downloads a project file. Ctrl/Cmd+Z undoes an edit, Ctrl/Cmd+Shift+Z or Ctrl+Y redoes it, and Delete removes the selected mechanism or digital object. Removing a host leaves its dependents present for repair.
 
