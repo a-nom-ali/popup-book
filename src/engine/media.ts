@@ -45,6 +45,55 @@ export function setMatrix(object: THREE.Object3D, matrix: THREE.Matrix4) {
   object.matrix.copy(matrix);
   matrix.decompose(object.position, object.quaternion, object.scale);
 }
+/** Printed ink follows the paper's declared front, including right-page attachments. */
+export function createArtworkMesh(
+  part: PaperPart,
+  texture: THREE.Texture,
+  singleSided: boolean,
+): THREE.Mesh {
+  const b = polygonBounds(part.polygon),
+    w = Math.max(0.001, b.maxX - b.minX),
+    h = Math.max(0.001, b.maxY - b.minY),
+    data = triangulate(part),
+    geometry = new THREE.BufferGeometry();
+  geometry.setAttribute(
+    'position',
+    new THREE.Float32BufferAttribute(
+      data.points.flatMap((p) => [p[0], p[1], 0]),
+      3,
+    ),
+  );
+  geometry.setAttribute(
+    'uv',
+    new THREE.Float32BufferAttribute(
+      data.points.flatMap((p) => [(p[0] - b.minX) / w, 1 - (p[1] - b.minY) / h]),
+      2,
+    ),
+  );
+  // BackSide materials do not survive glTF export; orient the actual triangles instead.
+  const indices = [...data.indices];
+  if (singleSided && part.front === -1)
+    for (let i = 0; i < indices.length; i += 3)
+      [indices[i + 1], indices[i + 2]] = [indices[i + 2], indices[i + 1]];
+  geometry.setIndex(indices);
+  geometry.computeVertexNormals();
+  const mesh = new THREE.Mesh(
+    geometry,
+    new THREE.MeshStandardMaterial({
+      map: texture,
+      transparent: true,
+      side: singleSided ? THREE.FrontSide : THREE.DoubleSide,
+      roughness: 0.9,
+      depthWrite: false,
+      polygonOffset: true,
+      polygonOffsetFactor: -2,
+      polygonOffsetUnits: -2,
+    }),
+  );
+  mesh.userData.partId = part.id;
+  mesh.userData.printedFrontOnly = singleSided;
+  return mesh;
+}
 export async function loadMedia(
   compiled: CompiledSpread,
   pose: Pose,
@@ -79,38 +128,8 @@ export async function loadMedia(
       ctx.drawImage(image, artwork.x, artwork.y, artwork.width, artwork.height);
       const texture = new THREE.CanvasTexture(canvas);
       texture.colorSpace = THREE.SRGBColorSpace;
-      const data = triangulate(part),
-        geometry = new THREE.BufferGeometry();
-      geometry.setAttribute(
-        'position',
-        new THREE.Float32BufferAttribute(
-          data.points.flatMap((p) => [p[0], p[1], 0]),
-          3,
-        ),
-      );
-      geometry.setAttribute(
-        'uv',
-        new THREE.Float32BufferAttribute(
-          data.points.flatMap((p) => [(p[0] - b.minX) / w, 1 - (p[1] - b.minY) / h]),
-          2,
-        ),
-      );
-      geometry.setIndex(data.indices);
-      geometry.computeVertexNormals();
-      const mesh = new THREE.Mesh(
-        geometry,
-        new THREE.MeshStandardMaterial({
-          map: texture,
-          transparent: true,
-          side: THREE.DoubleSide,
-          roughness: 0.9,
-          depthWrite: false,
-          polygonOffset: true,
-          polygonOffsetFactor: -2,
-          polygonOffsetUnits: -2,
-        }),
-      );
-      mesh.userData.partId = part.id;
+      const singleSided = !!compiled.spread.decorations.find((d) => d.id === part.id && d.cutout);
+      const mesh = createArtworkMesh(part, texture, singleSided);
       const group = new THREE.Group();
       group.name = `art_${artwork.id}`;
       group.add(mesh);

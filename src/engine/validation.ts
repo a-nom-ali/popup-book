@@ -1,4 +1,4 @@
-import { Box3, Triangle, Vector3 } from 'three';
+import { Box3, Matrix4, Triangle, Vector3 } from 'three';
 import type { Diagnostic } from '../model';
 import {
   area,
@@ -13,6 +13,7 @@ import { compileProject, diagnostic, evaluateSpread, triangulate, worldPoint } f
 import type { CompiledSpread, PaperPart, Pose } from './geometry';
 import { templateParts, assemblyTabParts } from './fabrication';
 import type { Vec2 } from '../model';
+import { glueRegionValid, regionArea, regionContained } from './cutouts';
 
 export function validateStatic(compiled: CompiledSpread): Diagnostic[] {
   const pose = evaluateSpread(compiled, 180),
@@ -185,9 +186,57 @@ export function validateStatic(compiled: CompiledSpread): Diagnostic[] {
           [item.id],
         ),
       );
+  for (const decoration of compiled.spread.decorations) {
+    const parent = pose.parts.find((p) => p.id === decoration.parent);
+    if (!parent) continue; // The geometry compiler already reports missing attachments.
+    if (decoration.cutout || decoration.glueRegion !== undefined) {
+      if (!glueRegionValid(decoration, parent))
+        out.push(
+          diagnostic(
+            'cutout-glue',
+            `${decoration.name}: define a positive-area glue patch contained in both the cut-out and ${parent.name}, away from their holes. Move, redraw, or suggest its glue area.`,
+            [decoration.id, parent.id],
+          ),
+        );
+      else {
+        const regions = decoration.glueRegion!,
+          size = regionArea(regions),
+          minimumSpan = Math.min(
+            ...regions.map((r) =>
+              Math.min(
+                ...r.outline.map((p, i) => {
+                  const q = r.outline[(i + 1) % r.outline.length],
+                    dx = q[0] - p[0],
+                    dy = q[1] - p[1],
+                    length = Math.hypot(dx, dy);
+                  if (length < 1e-8) return Infinity;
+                  const projected = r.outline.map((v) => (-dy * v[0] + dx * v[1]) / length);
+                  return Math.max(...projected) - Math.min(...projected);
+                }),
+              ),
+            ),
+          );
+        if (size < 4 || minimumSpan < 1)
+          out.push(
+            diagnostic(
+              'cutout-glue-small',
+              `${decoration.name}: its glue region has ${size.toFixed(2)} mm² of material and a narrowest outline span of ${minimumSpan.toFixed(2)} mm. Review glue access in a physical prototype; these measurements do not assess bond strength or paper stiffness.`,
+              [decoration.id, parent.id],
+              undefined,
+              'warning',
+            ),
+          );
+      }
+    }
+  }
   for (const entry of templateParts(compiled, pose))
     for (const footprint of entry.footprints) {
-      if (!materialContains(footprint.points, entry.part))
+      if (
+        !regionContained([{ outline: footprint.points, holes: footprint.holes ?? [] }], {
+          outline: entry.part.polygon,
+          holes: entry.part.holes,
+        })
+      )
         out.push(
           diagnostic(
             'glue-footprint',
@@ -298,8 +347,70 @@ export function partsIntersect(a: PaperPart, b: PaperPart): boolean {
     }),
   );
 }
+export function isCoplanarAttachment(child: PaperPart, parent: PaperPart): boolean {
+  const relative = parent.matrix.clone().invert().multiply(child.matrix),
+    normal = new Vector3(0, 0, 1).transformDirection(relative);
+  // The renderer separates stacked zero-thickness sheets by 0.05 mm to avoid z-fighting.
+  return (
+    Math.abs(normal.z) > 1 - 1e-8 &&
+    child.polygon.every(
+      (p) => Math.abs(new Vector3(p[0], p[1], 0).applyMatrix4(relative).z) <= 0.051,
+    )
+  );
+}
+/** Remove display-only sheet separation before zero-thickness intersection checks. */
+export function physicalPaperPose(pose: Pose, compiled: CompiledSpread): Pose {
+  const byId = new Map(pose.parts.map((p) => [p.id, p])),
+    resolved = new Map<string, PaperPart>(),
+    resolving = new Set<string>();
+  const resolve = (part: PaperPart): PaperPart => {
+    if (resolved.has(part.id)) return resolved.get(part.id)!;
+    if (resolving.has(part.id)) return part;
+    resolving.add(part.id);
+    const decoration = compiled.spread.decorations.find((d) => d.id === part.id),
+      parent = decoration && byId.get(decoration.parent);
+    const physical =
+      decoration && parent
+        ? {
+            ...part,
+            matrix: resolve(parent)
+              .matrix.clone()
+              .multiply(
+                new Matrix4().makeTranslation(decoration.position[0], decoration.position[1], 0),
+              )
+              .multiply(new Matrix4().makeRotationZ(((decoration.rotation ?? 0) * Math.PI) / 180)),
+          }
+        : part;
+    resolving.delete(part.id);
+    resolved.set(part.id, physical);
+    return physical;
+  };
+  return { ...pose, parts: pose.parts.map(resolve) };
+}
+export function isDeclaredGlueStack(
+  a: PaperPart,
+  b: PaperPart,
+  parts: PaperPart[],
+  compiled: CompiledSpread,
+): boolean {
+  const decoration = a.role === 'decoration' ? a : b.role === 'decoration' ? b : undefined,
+    tab = a.role === 'glue-tab' ? a : b.role === 'glue-tab' ? b : undefined;
+  if (!decoration || !tab || tab.parentIds[1] !== decoration.parentIds[0]) return false;
+  const parent = parts.find((p) => p.id === tab.parentIds[1]),
+    authored = compiled.spread.decorations.find((d) => d.id === decoration.id);
+  // A ridge tab and a cut-out may both lie flat on the same recipient. This is
+  // declared stacking only when the cut-out has a valid bond and both are coplanar.
+  return (
+    !!parent &&
+    !!authored &&
+    glueRegionValid(authored, parent) &&
+    isCoplanarAttachment(decoration, parent) &&
+    isCoplanarAttachment(tab, parent)
+  );
+}
 export function collisionsAt(pose: Pose, compiled?: CompiledSpread): Diagnostic[] {
   if (pose.angle <= 0.001) return []; // closed-sheet stacking is intentional contact in a zero-thickness model
+  if (compiled) pose = physicalPaperPose(pose, compiled);
   const out: Diagnostic[] = [];
   const parts = compiled ? [...pose.parts, ...assemblyTabParts(compiled, pose)] : pose.parts;
   for (let i = 0; i < parts.length; i++)
@@ -307,8 +418,8 @@ export function collisionsAt(pose: Pose, compiled?: CompiledSpread): Diagnostic[
       const a = parts[i],
         b = parts[j];
       if (
-        (a.role === 'decoration' && a.parentIds.includes(b.id)) ||
-        (b.role === 'decoration' && b.parentIds.includes(a.id))
+        (a.role === 'decoration' && a.parentIds.includes(b.id) && isCoplanarAttachment(a, b)) ||
+        (b.role === 'decoration' && b.parentIds.includes(a.id) && isCoplanarAttachment(b, a))
       )
         continue;
       if (
@@ -316,6 +427,7 @@ export function collisionsAt(pose: Pose, compiled?: CompiledSpread): Diagnostic[
         (b.role === 'glue-tab' && b.parentIds.includes(a.id))
       )
         continue;
+      if (compiled && isDeclaredGlueStack(a, b, parts, compiled)) continue;
       // Two declared glue tabs bonded onto the same recipient are intentional stacking.
       if (
         a.role === 'glue-tab' &&

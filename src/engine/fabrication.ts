@@ -2,6 +2,7 @@ import type { Vec2 } from '../model';
 import type { CompiledSpread, PaperPart, FoldLine, Pose } from './geometry';
 import { worldPoint } from './geometry';
 import { makeTab, segmentDistance } from './polygon';
+import { cutoutToParent } from './cutouts';
 
 export interface TemplateTab {
   id: string;
@@ -14,7 +15,8 @@ export interface TemplatePart {
   part: PaperPart;
   outline: Vec2[];
   tabs: TemplateTab[];
-  footprints: { points: Vec2[]; match: string; tabId?: string }[];
+  footprints: { points: Vec2[]; holes?: Vec2[][]; match: string; tabId?: string }[];
+  reverseGlue: { points: Vec2[]; holes: Vec2[][]; match: string }[];
 }
 export function partTabs(part: PaperPart, compiled: CompiledSpread): TemplateTab[] {
   const edges = new Map<number, { depth: number; match?: string; kind: FoldLine['kind'] }>();
@@ -57,7 +59,7 @@ export function templateParts(compiled: CompiledSpread, pose: Pose): TemplatePar
       const tab = tabs.find((t) => t.edge === i);
       if (tab?.polygon.length === 4) outline.push(tab.polygon[3], tab.polygon[2]);
     });
-    return { part, tabs, outline, footprints: [] } as TemplatePart;
+    return { part, tabs, outline, footprints: [], reverseGlue: [] } as TemplatePart;
   });
   for (const entry of parts)
     for (const tab of entry.tabs) {
@@ -125,6 +127,26 @@ export function templateParts(compiled: CompiledSpread, pose: Pose): TemplatePar
         return [v.x, v.y] as Vec2;
       });
       target.footprints.push({ points, match: guide.part.id });
+    }
+  }
+  // The finished image stays clean. Only the support receives a printed glue guide;
+  // the cut-out's own patch is shown in a mirrored reverse-side assembly inset.
+  for (const decoration of compiled.spread.decorations) {
+    const entry = parts.find((p) => p.part.id === decoration.id),
+      target = parts.find((p) => p.part.id === decoration.parent);
+    if (!entry || !target) continue;
+    for (const region of decoration.glueRegion ?? []) {
+      if (region.outline.length < 3) continue;
+      entry.reverseGlue.push({
+        points: region.outline,
+        holes: region.holes,
+        match: decoration.parent,
+      });
+      target.footprints.push({
+        points: region.outline.map((p) => cutoutToParent(decoration, p)),
+        holes: region.holes.map((h) => h.map((p) => cutoutToParent(decoration, p))),
+        match: decoration.id,
+      });
     }
   }
   return parts;

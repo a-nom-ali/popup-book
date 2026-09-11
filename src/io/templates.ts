@@ -34,13 +34,26 @@ const printable = (s: string) =>
     .replace(/[\u0300-\u036f]/g, '')
     .replace(/[^\x20-\x7e\xa0-\xff]/g, '-');
 function layout(entry: TemplatePart) {
-  const b = polygonBounds(entry.outline);
+  const b = polygonBounds(entry.outline),
+    paperWidth = b.maxX - b.minX + 10,
+    paperHeight = b.maxY - b.minY + 10,
+    scale = Math.min(1, 90 / Math.max(1, b.maxX - b.minX), 60 / Math.max(1, b.maxY - b.minY)),
+    inset = entry.reverseGlue.length
+      ? { x: 5, y: paperHeight + 13, scale, b, height: (b.maxY - b.minY) * scale }
+      : undefined;
   return {
     x: 5 - b.minX,
     y: 5 - b.minY,
-    width: b.maxX - b.minX + 10,
-    height: b.maxY - b.minY + 10,
+    width: inset ? Math.max(120, paperWidth) : paperWidth,
+    height: inset ? inset.y + inset.height + 7 : paperHeight,
+    inset,
   };
+}
+const regionPath = (points: Vec2[], holes: Vec2[][] = []) =>
+  [svgPath(points), ...holes.map(svgPath)].join(' ');
+function labelPosition(points: Vec2[]): Vec2 {
+  const b = polygonBounds(points);
+  return [(b.minX + b.maxX) / 2, (b.minY + b.maxY) / 2];
 }
 export function tileLayout(width: number, height: number, paper: 'A4' | 'Letter') {
   const [pw, ph] = PAPER[paper],
@@ -76,7 +89,9 @@ export function assemblyInstructions(entries: TemplatePart[], ids: Map<string, s
       if (p.role.startsWith('guide'))
         return `${id} ${p.name}: wrap over the sliding strip first. Glue only the two 6 mm feet to the marked areas on ${target}. Keep the central channel free.`;
       if (p.role === 'decoration')
-        return `${id} ${p.name}: attach flat to ${target} at its authored position.`;
+        return entry.reverseGlue.length
+          ? `${id} ${p.name}: keep the illustrated face outward. Apply glue on the reverse only, using the mirrored assembly inset; align with the matching ${id} guide on ${target}. The inset is a reference, not another piece to cut.`
+          : `${id} ${p.name}: attach flat to ${target} at its authored position.`;
       const ridge = entry.tabs.find((t) => t.fold.kind === 'mountain');
       return `${id} ${p.name}: score the marked creases; glue base tabs to matching areas on ${target}.${ridge ? ` Join the ridge tab to ${ids.get(ridge.match!) ?? ridge.match}.` : ''} Follow the 3D preview for assembly direction.`;
     });
@@ -113,11 +128,30 @@ export function exportSVG(compiled: CompiledSpread, diagnostics: Diagnostic[]): 
       body.push(
         `<path d="${svgPath(tab.polygon)}" fill="url(#hatch)"/><text x="${(tab.polygon[0][0] + tab.polygon[2][0]) / 2}" y="${(tab.polygon[0][1] + tab.polygon[2][1]) / 2}" font-size="2.3" text-anchor="middle" fill="#3d754f">GLUE ${esc(ids.get(tab.match ?? '') ?? '')}</text>`,
       );
-    for (const f of entry.footprints)
+    for (const f of entry.footprints) {
+      const center = labelPosition(f.points);
       body.push(
-        `<path d="${svgPath(f.points)}" fill="url(#hatch)" stroke="#568664" stroke-width=".2" stroke-dasharray="1 1"/><text x="${(f.points[0][0] + f.points[2][0]) / 2}" y="${(f.points[0][1] + f.points[2][1]) / 2}" font-size="2.5" text-anchor="middle">${esc(ids.get(f.match) ?? f.match)}</text>`,
+        `<path d="${regionPath(f.points, f.holes)}" fill-rule="evenodd" fill="url(#hatch)" stroke="#568664" stroke-width=".2" stroke-dasharray="1 1"/><text x="${center[0]}" y="${center[1]}" font-size="2.5" text-anchor="middle">${esc(ids.get(f.match) ?? f.match)}</text>`,
       );
-    body.push('</g></g>');
+    }
+    body.push('</g>');
+    if (l.inset) {
+      const inset = l.inset,
+        reverse = (points: Vec2[]): Vec2[] =>
+          points.map(([x, y]) => [
+            inset.x + (inset.b.maxX - x) * inset.scale,
+            inset.y + (y - inset.b.minY) * inset.scale,
+          ]);
+      body.push(
+        `<g data-reverse-glue="${esc(p.id)}" transform="translate(0 6)"><text x="5" y="${inset.y - 6}" font-size="3.1">REVERSE GLUE GUIDE — assembly reference only</text><text x="5" y="${inset.y - 2}" font-size="2.5">Mirrored back · ${Math.round(inset.scale * 100)}% diagram · do not cut</text><path d="${regionPath(reverse(p.polygon), p.holes.map(reverse))}" fill="#f7f7f2" fill-rule="evenodd" stroke="#7a827a" stroke-width=".2"/>`,
+      );
+      for (const f of entry.reverseGlue)
+        body.push(
+          `<path d="${regionPath(reverse(f.points), f.holes.map(reverse))}" fill="url(#hatch)" fill-rule="evenodd" stroke="#568664" stroke-width=".2"/>`,
+        );
+      body.push('</g>');
+    }
+    body.push('</g>');
     y += l.height + 24;
   }
   const notes = [
@@ -200,6 +234,10 @@ export async function exportPDF(
   write(
     'Line key: solid red = cut; dashed blue = valley fold; purple dash-dot = mountain fold; green = glue. Each piece has a stable matching P-number. Leave slider channels unglued.',
   );
+  if (entries.some((entry) => entry.reverseGlue.length))
+    write(
+      'Illustrated cut-outs print single-sided. Keep glue off the illustration. Their mirrored reverse-side diagrams show where to apply glue on the back; diagrams are assembly references only. Match the glue guide printed on the support.',
+    );
   write(
     'Large pieces span overlapping tiles. Match the printed tile coordinates and alignment marks; overlap adjacent sheets by 5 mm. Do not fit to page.',
   );
@@ -218,6 +256,7 @@ export async function exportPDF(
         true,
       );
   const master = await PDFDocument.create(),
+    masterFont = await master.embedFont(StandardFonts.Helvetica),
     imageCache = new Map<string, PDFImage>();
   for (const entry of entries) {
     const l = layout(entry),
@@ -233,7 +272,8 @@ export async function exportPDF(
         color: fill ? rgb(...color) : undefined,
         opacity: fill ? 0.13 : 1,
       });
-    path(entry.outline, [0.62, 0.64, 0.56], true);
+    if (!compiled.spread.decorations.some((d) => d.id === p.id && d.cutout))
+      path(entry.outline, [0.62, 0.64, 0.56], true);
     for (const a of compiled.spread.artwork.filter((a) => a.partId === p.id)) {
       const asset = compiled.project.assets[a.assetId];
       if (!asset?.data) continue;
@@ -263,6 +303,48 @@ export async function exportPDF(
     }
     path(entry.outline, [0.73, 0.33, 0.24]);
     for (const hole of p.holes) path(hole, [0.73, 0.33, 0.24]);
+    const glue = (points: Vec2[], holes: Vec2[][] = [], border = true) => {
+      // PDF's even-odd clip preserves openings inside irregular glue regions.
+      source.pushOperators(pushGraphicsState());
+      for (const poly of [points, ...holes]) {
+        if (!poly.length) continue;
+        source.pushOperators(moveTo((poly[0][0] + l.x) * MM, (l.height - l.y - poly[0][1]) * MM));
+        for (const v of poly.slice(1))
+          source.pushOperators(lineTo((v[0] + l.x) * MM, (l.height - l.y - v[1]) * MM));
+        source.pushOperators(closePath());
+      }
+      source.pushOperators(clipEvenOdd(), endPath());
+      const b = polygonBounds(points);
+      source.drawRectangle({
+        x: (b.minX + l.x) * MM,
+        y: (l.height - l.y - b.maxY) * MM,
+        width: (b.maxX - b.minX) * MM,
+        height: (b.maxY - b.minY) * MM,
+        color: rgb(0.3, 0.53, 0.38),
+        opacity: 0.18,
+      });
+      source.pushOperators(popGraphicsState());
+      if (border) {
+        path(points, [0.3, 0.53, 0.38]);
+        for (const hole of holes) path(hole, [0.3, 0.53, 0.38]);
+      }
+    };
+    const labelGlue = (points: Vec2[], text: string, holes: Vec2[][] = [], border = true) => {
+      glue(points, holes, border);
+      const [x, y] = labelPosition(points);
+      const label = printable(text);
+      source.drawText(label, {
+        x: (x + l.x) * MM - masterFont.widthOfTextAtSize(label, 6) / 2,
+        y: (l.height - l.y - y) * MM,
+        size: 6,
+        font: masterFont,
+        color: rgb(0.2, 0.4, 0.27),
+      });
+    };
+    for (const tab of entry.tabs)
+      labelGlue(tab.polygon, `GLUE ${ids.get(tab.match ?? '') ?? ''}`, [], false);
+    for (const f of entry.footprints) labelGlue(f.points, ids.get(f.match) ?? 'MATCH', f.holes);
+    // Glue outlines must not obscure the required fold pattern along their shared edge.
     const folds = [...p.folds, ...entry.tabs.map((t) => t.fold)];
     for (const fold of folds)
       source.drawLine({
@@ -272,19 +354,29 @@ export async function exportPDF(
         color: fold.kind === 'mountain' ? rgb(0.46, 0.38, 0.66) : rgb(0.24, 0.52, 0.63),
         dashArray: (fold.kind === 'mountain' ? [3, 1, 0.5, 1] : [2, 1]).map((n) => n * MM),
       });
-    const labelGlue = (points: Vec2[], text: string) => {
-      path(points, [0.3, 0.53, 0.38], true);
-      const x = (points[0][0] + points[2][0]) / 2,
-        y = (points[0][1] + points[2][1]) / 2;
-      source.drawText(printable(text), {
-        x: (x + l.x) * MM - 5,
-        y: (l.height - l.y - y) * MM,
-        size: 6,
-        color: rgb(0.2, 0.4, 0.27),
+    if (l.inset) {
+      const inset = l.inset,
+        reverse = (points: Vec2[]): Vec2[] =>
+          points.map(([x, y]) => [
+            inset.x + (inset.b.maxX - x) * inset.scale - l.x,
+            inset.y + (y - inset.b.minY) * inset.scale - l.y,
+          ]);
+      source.drawText('REVERSE GLUE GUIDE - assembly reference only', {
+        x: 5 * MM,
+        y: (l.height - inset.y + 6) * MM,
+        size: 8,
+        color: rgb(0.25, 0.35, 0.27),
       });
-    };
-    for (const tab of entry.tabs) labelGlue(tab.polygon, `GLUE ${ids.get(tab.match ?? '') ?? ''}`);
-    for (const f of entry.footprints) labelGlue(f.points, ids.get(f.match) ?? 'MATCH');
+      source.drawText(`Mirrored back / ${Math.round(inset.scale * 100)}% diagram / do not cut`, {
+        x: 5 * MM,
+        y: (l.height - inset.y + 2) * MM,
+        size: 7,
+        color: rgb(0.4, 0.4, 0.4),
+      });
+      path(reverse(p.polygon), [0.48, 0.51, 0.48]);
+      for (const hole of p.holes) path(reverse(hole), [0.48, 0.51, 0.48]);
+      for (const f of entry.reverseGlue) glue(reverse(f.points), f.holes.map(reverse));
+    }
     await master.flush(); // Resolve source font/image objects before the page is copied into the output PDF.
     const tiles = tileLayout(l.width, l.height, paper);
     for (const tile of tiles.tiles) {
