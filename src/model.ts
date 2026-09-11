@@ -30,6 +30,28 @@ export interface PaperDecoration {
   holes: Vec2[][];
   position: Vec2;
   color: string;
+  /** In-plane rotation in degrees; absent in legacy projects. */
+  rotation?: number;
+  /** Bonded material, expressed in this decoration's millimetre frame. */
+  glueRegion?: PaperRegion[];
+  cutout?: CutoutSource;
+}
+export interface PaperRegion {
+  outline: Vec2[];
+  holes: Vec2[][];
+}
+export interface CutoutSource {
+  assetId: string;
+  threshold: number;
+  tolerance: number;
+  imageWidth: number;
+  imageHeight: number;
+  width: number;
+  height: number;
+  imageX: number;
+  imageY: number;
+  /** All disconnected pieces of a single trace share this ID. */
+  traceGroup?: string;
 }
 export interface GlueTab {
   id: string;
@@ -77,7 +99,7 @@ export interface Asset {
   data: string;
 }
 export interface Project {
-  version: 1;
+  version: 2;
   id: string;
   name: string;
   pageWidth: number;
@@ -118,7 +140,7 @@ const mechanismSchema = z.object({
   cutouts: z.record(z.string(), z.array(z.array(point))),
 });
 export const projectSchema = z.object({
-  version: z.literal(1),
+  version: z.literal(2),
   id: z.string(),
   name: z.string(),
   pageWidth: number.positive().max(2000),
@@ -145,6 +167,24 @@ export const projectSchema = z.object({
             holes: z.array(z.array(point)),
             position: point,
             color: z.string(),
+            rotation: number.optional(),
+            glueRegion: z
+              .array(z.object({ outline: z.array(point), holes: z.array(z.array(point)) }))
+              .optional(),
+            cutout: z
+              .object({
+                assetId: z.string(),
+                threshold: number.min(0).max(1),
+                tolerance: number.nonnegative(),
+                imageWidth: number.positive(),
+                imageHeight: number.positive(),
+                width: number.positive(),
+                height: number.positive(),
+                imageX: number.default(0),
+                imageY: number.default(0),
+                traceGroup: z.string().optional(),
+              })
+              .optional(),
           }),
         ),
         tabs: z.array(
@@ -187,7 +227,13 @@ export const projectSchema = z.object({
     .max(100),
 });
 export function parseProject(input: unknown): Project {
-  const project = projectSchema.parse(input) as Project;
+  // Version 1 used the same panel and artwork coordinate frames. No geometric
+  // migration is necessary, and leaving optional fields absent preserves it.
+  const migrated =
+    input && typeof input === 'object' && 'version' in input && input.version === 1
+      ? { ...input, version: 2 }
+      : input;
+  const project = projectSchema.parse(migrated) as Project;
   const ids = [
     project.id,
     ...project.spreads.flatMap((s) => [

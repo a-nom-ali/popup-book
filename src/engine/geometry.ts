@@ -518,7 +518,8 @@ export function evaluateSpread(
         .clone()
         .multiply(
           new Matrix4().makeTranslation(d.position[0], d.position[1], (parent.front ?? 1) * 0.05),
-        ),
+        )
+        .multiply(new Matrix4().makeRotationZ(rad(d.rotation ?? 0))),
       folds: [],
       parentIds: [d.parent],
       front: parent.front,

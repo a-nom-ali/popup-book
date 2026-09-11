@@ -235,7 +235,7 @@ export function exampleProject(): Project {
     height: 22,
   });
   return {
-    version: 1,
+    version: 2,
     id: uid('book'),
     name: 'Studies in paper',
     pageWidth: 148,
