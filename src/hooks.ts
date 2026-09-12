@@ -5,6 +5,19 @@ import { z } from 'zod';
 import { SCENERY } from './scenery';
 import { insertScenery, insertIllustratedExample } from './sceneryCommands';
 import { traceImage } from './io/trace';
+import { DIGITAL_BUILTINS, digitalObjectSchema } from './model';
+import {
+  insertDigital,
+  updateDigital,
+  duplicateDigital,
+  removeDigital,
+  placeDigitalBase,
+} from './digitalCommands';
+import { useDigitalRuntime } from './digitalRuntime';
+import { DEMOS, buildDemo } from './demos';
+import { appendDemo } from './demoCommands';
+import { compileProject, evaluateSpread } from './engine/geometry';
+import { evaluateDigitalPresentation } from './engine/digital';
 
 export function usePersistence() {
   useEffect(() => {
@@ -65,6 +78,9 @@ export function useKeyboard() {
     const handler = (e: KeyboardEvent) => {
       const s = useStudio.getState(),
         target = e.target as HTMLElement;
+      // Modal demo controls have their own state. Studio shortcuts must not edit
+      // the book behind an isolated preview (or any other modal dialog).
+      if (document.querySelector('[role="dialog"], dialog[open]')) return;
       if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 's') {
         e.preventDefault();
         try {
@@ -129,6 +145,9 @@ export function useAgentTools() {
         const s = useStudio.getState();
         return {
           name: s.project.name,
+          version: s.project.version,
+          saveStatus: s.saveStatus,
+          undoSteps: s.past.length,
           activeSpreadId: s.activeSpreadId,
           spreads: s.project.spreads.map((p) => ({
             id: p.id,
@@ -136,9 +155,13 @@ export function useAgentTools() {
             mechanisms: p.mechanisms,
             decorations: p.decorations,
             artwork: p.artwork,
+            digital: p.digital,
           })),
           assets: Object.values(s.project.assets).map(({ id, name, mime }) => ({ id, name, mime })),
           scenery: SCENERY.map(({ id, name }) => ({ id, name })),
+          digitalLibrary: DIGITAL_BUILTINS,
+          demos: DEMOS.map(({ id, title }) => ({ id, title })),
+          digitalRuntime: useDigitalRuntime.getState().getInputs(s.drivers),
           angle: s.angle,
           drivers: s.drivers,
           diagnostics: s.diagnostics,
@@ -360,6 +383,160 @@ export function useAgentTools() {
         if (data.regions) s.setCutoutGlue(data.partId, data.regions);
         else s.suggestCutoutGlue(data.partId);
         return { partId: data.partId };
+      },
+    });
+    register({
+      name: 'insert_digital',
+      description:
+        'Attach a bundled digital prop/effect or existing GLB asset to a paper panel or cut-out. One undo step.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          builtin: { enum: DIGITAL_BUILTINS },
+          assetId: { type: 'string' },
+          parentId: { type: 'string' },
+        },
+      },
+      execute: (input) => {
+        const data = z
+          .object({
+            builtin: z.enum(DIGITAL_BUILTINS).optional(),
+            assetId: z.string().optional(),
+            parentId: z.string().optional(),
+          })
+          .parse(input);
+        if (!!data.builtin === !!data.assetId)
+          throw new Error('Choose exactly one builtin or assetId.');
+        return {
+          id: insertDigital(
+            data.builtin
+              ? { kind: 'builtin', id: data.builtin, seed: 42, count: 16 }
+              : { kind: 'glb', assetId: data.assetId! },
+            data.parentId,
+          ),
+        };
+      },
+    });
+    register({
+      name: 'edit_digital',
+      description:
+        'Update digital placement and behaviors, duplicate, remove, or place its measured base on the panel. Changes use the same validated commands as the inspector.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          id: { type: 'string' },
+          action: { enum: ['update', 'duplicate', 'remove', 'place-base'] },
+          patch: {
+            type: 'object',
+            description:
+              'DigitalObject fields: position/rotation triples, scale, parent, source, entrance, motion, triggers, behavior, clip, sliderId, angleStart/End.',
+          },
+        },
+        required: ['id', 'action'],
+      },
+      execute: (input) => {
+        const data = z
+          .object({
+            id: z.string(),
+            action: z.enum(['update', 'duplicate', 'remove', 'place-base']),
+            patch: digitalObjectSchema.partial().optional(),
+          })
+          .parse(input);
+        if (data.action === 'duplicate') return { id: duplicateDigital(data.id) };
+        if (data.action === 'remove') removeDigital(data.id);
+        if (data.action === 'update') updateDigital(data.id, data.patch ?? {});
+        if (data.action === 'place-base') {
+          const bounds = useDigitalRuntime.getState().measurements[data.id];
+          if (!bounds)
+            throw new Error(
+              'Open the 3D viewer and wait for the model to load before placing its base.',
+            );
+          placeDigitalBase(data.id, bounds);
+        }
+        return { id: data.id };
+      },
+    });
+    register({
+      name: 'test_digital',
+      description:
+        'Control session-only digital playback. Trigger a visible paper/digital target in Test interactions, preview an individual action, pause, seek, or restart. Does not edit the project.',
+      inputSchema: {
+        type: 'object',
+        properties: {
+          targetId: { type: 'string' },
+          objectId: { type: 'string' },
+          action: { enum: ['entrance', 'clip', 'toggle'] },
+          time: { type: 'number', minimum: 0 },
+          paused: { type: 'boolean' },
+          restart: { type: 'boolean' },
+        },
+      },
+      execute: (input) => {
+        const data = z
+          .object({
+            targetId: z.string().optional(),
+            objectId: z.string().optional(),
+            action: z.enum(['entrance', 'clip', 'toggle']).optional(),
+            time: z.number().nonnegative().finite().optional(),
+            paused: z.boolean().optional(),
+            restart: z.boolean().optional(),
+          })
+          .parse(input);
+        const state = useStudio.getState(),
+          spread = state.project.spreads.find((sp) => sp.id === state.activeSpreadId)!;
+        if (data.restart) useDigitalRuntime.getState().reset();
+        if (data.paused !== undefined) useDigitalRuntime.setState({ paused: data.paused });
+        if (data.time !== undefined) useDigitalRuntime.setState({ time: data.time });
+        if (data.targetId) {
+          const compiled = compileProject(state.project, spread.id),
+            pose = evaluateSpread(compiled, state.angle, state.drivers);
+          const target = spread.digital.find((d) => d.id === data.targetId);
+          if (
+            !pose.parts.some((p) => p.id === data.targetId) &&
+            (!target ||
+              !evaluateDigitalPresentation(
+                target,
+                pose,
+                useDigitalRuntime.getState().getInputs(state.drivers),
+                { compiled },
+              ).visible)
+          )
+            throw new Error(
+              'Choose a visible paper or digital trigger target, or preview an individual object action.',
+            );
+          state.set({ testInteractions: true, view: '3d' });
+          useDigitalRuntime.getState().trigger(spread, data.targetId);
+        }
+        if (data.objectId && data.action) {
+          if (!spread.digital.some((d) => d.id === data.objectId))
+            throw new Error('Choose an existing digital object.');
+          useDigitalRuntime.getState().preview(data.objectId, data.action);
+        }
+        return useDigitalRuntime.getState().getInputs(state.drivers);
+      },
+    });
+    register({
+      name: 'insert_demo',
+      description:
+        'Append a fresh editable digital demo and its assets, scaled to the current book. One undo step. Never replaces existing spreads.',
+      inputSchema: {
+        type: 'object',
+        properties: { demoId: { type: 'string' } },
+        required: ['demoId'],
+      },
+      execute: (input) => {
+        const { demoId } = z.object({ demoId: z.string() }).parse(input),
+          definition = DEMOS.find((d) => d.id === demoId);
+        if (!definition) throw new Error('Choose a demo from inspect_book.');
+        const demo = buildDemo(definition.id),
+          state = useStudio.getState();
+        let id = '';
+        state.edit('Interactive demo added', (project) => {
+          id = appendDemo(project, demo.project).spread.id;
+        });
+        state.selectSpread(id);
+        state.set({ view: '3d', angle: demo.angle });
+        return { spreadId: id };
       },
     });
     return () => controller.abort();

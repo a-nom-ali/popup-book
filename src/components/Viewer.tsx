@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { Maximize, RotateCcw } from 'lucide-react';
 import { useStudio } from '../store';
 import { evaluateSpread } from '../engine/geometry';
@@ -9,13 +10,35 @@ import { createPaperMesh, disposeObject } from '../engine/scene';
 import { loadMedia, setMatrix, updateMedia } from '../engine/media';
 import type { MediaAttachment } from '../engine/media';
 import { assemblyTabParts } from '../engine/fabrication';
+import { digitalBaseMatrix } from '../engine/digital';
+import type { DigitalRuntimeInputs } from '../engine/digital';
+import type { DigitalObject, Diagnostic, Vec3 } from '../model';
+import { useDigitalRuntime } from '../digitalRuntime';
+import { updateDigital } from '../digitalCommands';
 
-export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
+export interface ViewerPreview {
+  angle: number;
+  drivers: Record<string, number>;
+  runtime: DigitalRuntimeInputs;
+  selectedId?: string | null;
+  onTrigger: (targetId: string) => void;
+  onNotice?: (message: string) => void;
+}
+
+export default function Viewer({
+  compiled,
+  preview,
+}: {
+  compiled: CompiledSpread;
+  preview?: ViewerPreview;
+}) {
   const container = useRef<HTMLDivElement>(null),
     latest = useRef(compiled),
     reset = useRef<() => void>(() => {});
+  const previewRef = useRef(preview);
   const [error, setError] = useState('');
   latest.current = compiled;
+  previewRef.current = preview;
   useEffect(() => {
     const el = container.current!;
     let renderer: THREE.WebGLRenderer;
@@ -86,6 +109,78 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
     scene.add(grid);
     const book = new THREE.Group();
     scene.add(book);
+    const proxy = new THREE.Object3D();
+    scene.add(proxy);
+    const gizmo = new TransformControls(camera, renderer.domElement);
+    gizmo.setSpace('local');
+    gizmo.setSize(0.8);
+    scene.add(gizmo.getHelper());
+    const selectionBox = new THREE.BoxHelper(new THREE.Object3D(), '#da9459');
+    selectionBox.visible = false;
+    scene.add(selectionBox);
+    let dragObject: DigitalObject | undefined;
+    let dragOriginal: DigitalObject | undefined;
+    let wasDragging = false;
+    gizmo.addEventListener('dragging-changed', (event) => {
+      controls.enabled = !event.value;
+    });
+    gizmo.addEventListener('mouseDown', () => {
+      const id = useStudio.getState().selectedId;
+      dragOriginal = latest.current.spread.digital.find((d) => d.id === id);
+      dragObject = dragOriginal && structuredClone(dragOriginal);
+      wasDragging = true;
+    });
+    gizmo.addEventListener('objectChange', () => {
+      if (!dragOriginal) return;
+      const state = useStudio.getState(),
+        data = latest.current;
+      const pose = evaluateSpread(data, state.angle, state.drivers);
+      const parent = pose.parts.find((p) => p.id === dragOriginal!.parent);
+      if (!parent) return;
+      const front = parent.front ?? 1;
+      const base = digitalBaseMatrix(
+        { ...dragOriginal, position: [0, 0, 0], rotation: [0, 0, 0], scale: 0.001 },
+        pose,
+        data,
+      ).multiply(new THREE.Matrix4().makeRotationX((-front * Math.PI) / 2));
+      proxy.updateMatrix();
+      const local = base.invert().multiply(proxy.matrix);
+      const position = new THREE.Vector3(),
+        rotation = new THREE.Quaternion(),
+        scale = new THREE.Vector3();
+      local.decompose(position, rotation, scale);
+      const q = new THREE.Quaternion()
+        .setFromAxisAngle(new THREE.Vector3(1, 0, 0), (-front * Math.PI) / 2)
+        .multiply(rotation);
+      const euler = new THREE.Euler().setFromQuaternion(q);
+      const factors = [scale.x, scale.y, scale.z].map((n) => n / (1000 * dragOriginal!.scale));
+      const factor = factors.reduce((a, b) => (Math.abs(b - 1) > Math.abs(a - 1) ? b : a), 1);
+      dragObject = {
+        ...dragOriginal,
+        position: [position.x, position.y, position.z * front],
+        rotation: [euler.x, euler.y, euler.z].map((n) => (n * 180) / Math.PI) as Vec3,
+        scale: Math.max(0.000001, dragOriginal.scale * Math.abs(factor)),
+      };
+    });
+    gizmo.addEventListener('mouseUp', () => {
+      if (
+        dragObject &&
+        dragOriginal &&
+        JSON.stringify(dragObject) !== JSON.stringify(dragOriginal)
+      ) {
+        try {
+          updateDigital(dragObject.id, {
+            position: dragObject.position,
+            rotation: dragObject.rotation,
+            scale: dragObject.scale,
+          });
+        } catch (error) {
+          useStudio.getState().set({ notice: (error as Error).message });
+        }
+      }
+      dragObject = undefined;
+      dragOriginal = undefined;
+    });
     const meshes = new Map<string, THREE.Group>();
     let previous: CompiledSpread | undefined,
       previousAngle = -1,
@@ -95,6 +190,7 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
       active = true,
       lastTime = performance.now();
     let media: MediaAttachment[] = [];
+    let mediaKey = '';
     const resize = () => {
       const { width, height } = el.getBoundingClientRect();
       if (!width || !height) return;
@@ -109,9 +205,10 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
     let down = [0, 0];
     const pointerDown = (e: PointerEvent) => {
       down = [e.clientX, e.clientY];
+      if (!gizmo.dragging) wasDragging = false;
     };
     const pick = (e: PointerEvent) => {
-      if (Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
+      if (wasDragging || Math.hypot(e.clientX - down[0], e.clientY - down[1]) > 5) return;
       const r = el.getBoundingClientRect();
       raycaster.setFromCamera(
         new THREE.Vector2(
@@ -120,27 +217,44 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
         ),
         camera,
       );
-      const hit = raycaster.intersectObject(book, true).find((h) => h.object instanceof THREE.Mesh);
-      const digitalId = hit?.object.userData.digitalId;
-      if (digitalId) {
-        const a = media.find((a) => a.id === digitalId);
-        if (a) {
-          a.clicked = true;
-          a.elapsed = 0;
-          a.action?.reset().play();
+      const hit = raycaster.intersectObject(book, true).find((h) => {
+        if (!(h.object instanceof THREE.Mesh)) return false;
+        let node: THREE.Object3D | null = h.object;
+        while (node) {
+          if (!node.visible) return false;
+          node = node.parent;
         }
-      }
-      const id = hit?.object.userData.partId as string | undefined;
-      useStudio.getState().set({
-        selectedId:
-          digitalId ?? (id?.includes(':tab') ? id.slice(0, id.lastIndexOf(':tab')) : id) ?? null,
+        return true;
       });
+      const digitalId = hit?.object.userData.digitalId;
+      const id = hit?.object.userData.partId as string | undefined;
+      const selectedId =
+        digitalId ?? (id?.includes(':tab') ? id.slice(0, id.lastIndexOf(':tab')) : id) ?? null;
+      const isolated = previewRef.current;
+      if (isolated) {
+        if (selectedId) isolated.onTrigger(selectedId);
+      } else {
+        const state = useStudio.getState();
+        if (state.testInteractions || state.reader) {
+          if (selectedId) useDigitalRuntime.getState().trigger(latest.current.spread, selectedId);
+        } else state.set({ selectedId });
+      }
     };
     renderer.domElement.addEventListener('pointerdown', pointerDown);
     renderer.domElement.addEventListener('pointerup', pick);
     const animate = () => {
       frame = requestAnimationFrame(animate);
-      const s = useStudio.getState(),
+      const isolated = previewRef.current;
+      const s = isolated
+          ? {
+              ...isolated,
+              diagnostics: [] as Diagnostic[],
+              testInteractions: true,
+              reader: true,
+              gizmo: 'translate' as const,
+              snap: false,
+            }
+          : useStudio.getState(),
         data = latest.current,
         drivers = JSON.stringify(s.drivers),
         now = performance.now(),
@@ -149,6 +263,9 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
       const pose = evaluateSpread(data, s.angle, s.drivers);
       if (data !== previous || s.angle !== previousAngle || drivers !== previousDrivers) {
         if (data !== previous) {
+          // Synchronize source revisions before a fast cached load can publish
+          // measurements; the app's passive effect can run after this frame.
+          if (!isolated) useDigitalRuntime.getState().sync(data.spread, data.project.assets);
           // Keep the last valid geometry of failed mechanisms while the document remains editable.
           const previousMeshes = new Map(meshes);
           book.clear();
@@ -164,18 +281,57 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
               book.add(mesh);
             } else disposeObject(mesh);
           }
-          media.forEach((a) => disposeObject(a.group));
-          media = [];
-          const current = ++generation;
-          loadMedia(data, pose).then((result) => {
-            if (!active || current !== generation) {
-              result.attachments.forEach((a) => disposeObject(a.group));
-              return;
-            }
-            media = result.attachments;
-            media.forEach((a) => book.add(a.group));
-            if (result.errors.length) useStudio.getState().set({ notice: result.errors.join(' ') });
-          });
+          const nextKey = JSON.stringify([
+            data.spread.id,
+            data.spread.artwork,
+            data.spread.decorations,
+            data.spread.mechanisms,
+            data.project.pageWidth,
+            data.project.pageHeight,
+            data.spread.digital.map((d) => [d.id, d.source, d.assetId, d.clip, d.parent]),
+          ]);
+          const assetsChanged =
+            !previous ||
+            Object.keys(data.project.assets).length !==
+              Object.keys(previous.project.assets).length ||
+            Object.entries(data.project.assets).some(
+              ([id, asset]) =>
+                asset.data !== previous?.project.assets[id]?.data ||
+                asset.mime !== previous?.project.assets[id]?.mime,
+            );
+          if (nextKey !== mediaKey || assetsChanged) {
+            mediaKey = nextKey;
+            media.forEach((a) => disposeObject(a.group));
+            media = [];
+            const current = ++generation;
+            loadMedia(data, pose).then((result) => {
+              if (!active || current !== generation) {
+                result.attachments.forEach((a) => disposeObject(a.group));
+                return;
+              }
+              media = result.attachments;
+              media.forEach((a) => book.add(a.group));
+              if (!previewRef.current) {
+                const measurements = Object.fromEntries(
+                  media
+                    .filter((a) => a.digital && a.bounds)
+                    .map((a) => [
+                      a.id,
+                      {
+                        min: a.bounds!.min.toArray() as Vec3,
+                        max: a.bounds!.max.toArray() as Vec3,
+                        clips: a.clips ?? [],
+                      },
+                    ]),
+                );
+                useDigitalRuntime.setState({ measurements });
+              }
+              if (result.errors.length) {
+                if (previewRef.current) previewRef.current.onNotice?.(result.errors.join(' '));
+                else useStudio.getState().set({ notice: result.errors.join(' ') });
+              }
+            });
+          } else media.forEach((a) => book.add(a.group));
         }
         for (const part of [...pose.parts, ...assemblyTabParts(data, pose)]) {
           let mesh = meshes.get(part.id);
@@ -190,7 +346,52 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
         previousAngle = s.angle;
         previousDrivers = drivers;
       }
-      updateMedia(media, pose, delta);
+      for (const attachment of media)
+        if (attachment.digital) {
+          attachment.digital =
+            dragObject?.id === attachment.id
+              ? dragObject
+              : data.spread.digital.find((d) => d.id === attachment.id);
+          if (attachment.digital) attachment.parent = attachment.digital.parent;
+        }
+      const runtime = isolated?.runtime ?? useDigitalRuntime.getState().getInputs(s.drivers);
+      updateMedia(
+        media,
+        pose,
+        delta,
+        runtime.time,
+        runtime,
+        data,
+        dragObject ? { [dragObject.id]: dragObject } : undefined,
+      );
+      const selectedDigital = data.spread.digital.find((d) => d.id === s.selectedId);
+      const selectedMedia = media.find((a) => a.id === s.selectedId && a.digital);
+      selectionBox.visible = !!selectedMedia && selectedMedia.group.visible;
+      if (selectionBox.visible) selectionBox.setFromObject(selectedMedia!.group);
+      if (
+        !isolated &&
+        !s.reader &&
+        !s.testInteractions &&
+        selectedDigital &&
+        pose.parts.some((p) => p.id === selectedDigital.parent)
+      ) {
+        gizmo.enabled = true;
+        if (gizmo.object !== proxy) gizmo.attach(proxy);
+        gizmo.setMode(s.gizmo);
+        gizmo.setTranslationSnap(s.snap ? 1 : null);
+        gizmo.setRotationSnap(s.snap ? Math.PI / 36 : null);
+        if (!gizmo.dragging) {
+          digitalBaseMatrix(selectedDigital, pose, data).decompose(
+            proxy.position,
+            proxy.quaternion,
+            proxy.scale,
+          );
+          proxy.updateMatrix();
+        }
+      } else {
+        gizmo.detach();
+        gizmo.enabled = false;
+      }
       for (const [id, group] of meshes)
         group.traverse((child) => {
           if (child.userData.outline) {
@@ -211,6 +412,7 @@ export default function Viewer({ compiled }: { compiled: CompiledSpread }) {
       cancelAnimationFrame(frame);
       observer.disconnect();
       controls.dispose();
+      gizmo.dispose();
       renderer.domElement.removeEventListener('pointerdown', pointerDown);
       renderer.domElement.removeEventListener('pointerup', pick);
       renderer.domElement.removeEventListener('webglcontextlost', contextLost);

@@ -52,6 +52,11 @@ import ExportDialog from './components/ExportDialog';
 import CutoutDialog from './components/CutoutDialog';
 import type { CutoutRequest } from './components/CutoutDialog';
 import SceneryLibrary from './components/SceneryLibrary';
+import DigitalLibrary from './components/DigitalLibrary';
+import DigitalControls from './components/DigitalControls';
+import DemosGallery from './components/DemosGallery';
+import { useDigitalRuntime } from './digitalRuntime';
+import { addDigitalToProject } from './digitalCommands';
 
 export default function App() {
   usePersistence();
@@ -60,6 +65,7 @@ export default function App() {
   const s = useStudio(),
     spread = s.project.spreads.find((p) => p.id === s.activeSpreadId) ?? s.project.spreads[0];
   const [exportOpen, setExportOpen] = useState(false),
+    [demosOpen, setDemosOpen] = useState(false),
     [issuesOpen, setIssuesOpen] = useState(false),
     [drawer, setDrawer] = useState<'book' | 'properties' | null>(null),
     [importing, setImporting] = useState(false);
@@ -72,6 +78,20 @@ export default function App() {
     () => evaluateSpread(compiled, s.angle, s.drivers),
     [compiled, s.angle, s.drivers],
   );
+  useEffect(() => {
+    useDigitalRuntime.getState().sync(spread, s.project.assets);
+  }, [spread, s.project.assets]);
+  useEffect(() => {
+    let frame = 0,
+      previous = performance.now();
+    const tick = (now: number) => {
+      useDigitalRuntime.getState().tick(Math.min((now - previous) / 1000, 0.1));
+      previous = now;
+      frame = requestAnimationFrame(tick);
+    };
+    frame = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(frame);
+  }, []);
   useEffect(() => {
     if (!s.playing) return;
     let frame = 0,
@@ -142,7 +162,7 @@ export default function App() {
         const sp = p.spreads.find((p) => p.id === spreadId)!;
         const b = polygonBounds(parent.polygon);
         if (asset.mime === 'model/gltf-binary')
-          sp.digital.push({
+          addDigitalToProject(p, spreadId, { kind: 'glb', assetId: asset.id }, parent.id, {
             id,
             name: file.name.replace(/\.glb$/i, ''),
             assetId: asset.id,
@@ -154,6 +174,7 @@ export default function App() {
             clip: 0,
             angleStart: 0,
             angleEnd: 180,
+            entrance: undefined,
           });
         else
           sp.artwork.push({
@@ -418,6 +439,14 @@ export default function App() {
             parentId={pose.parts.find((p) => p.id === s.selectedId)?.id}
             onInsert={() => setDrawer(null)}
           />
+          <DigitalLibrary
+            parentId={pose.parts.find((p) => p.id === s.selectedId)?.id}
+            onInsert={() => setDrawer('properties')}
+            onDemos={() => {
+              setDrawer(null);
+              setDemosOpen(true);
+            }}
+          />
           <div className="library-tip">
             <Scissors size={16} />
             <p>
@@ -564,6 +593,7 @@ export default function App() {
               </div>
             )}
           </div>
+          <DigitalControls onDemos={() => setDemosOpen(true)} />
           <div className="playback-bar">
             <button
               className={`play-button ${s.playing ? 'playing' : ''}`}
@@ -721,6 +751,7 @@ export default function App() {
         </span>
       </footer>
       {exportOpen && <ExportDialog compiled={compiled} onClose={() => setExportOpen(false)} />}
+      {demosOpen && <DemosGallery onClose={() => setDemosOpen(false)} />}
       {cutoutRequest && (
         <CutoutDialog request={cutoutRequest} onClose={() => setCutoutRequest(null)} />
       )}

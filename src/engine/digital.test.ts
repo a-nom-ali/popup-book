@@ -271,6 +271,46 @@ describe('deterministic digital events and clocks', () => {
     expect(evaluateDigitalPresentation(d, pose, off).visible).toBe(false);
     expect(JSON.stringify(p)).toBe(before);
   });
+  it('gates a slider entrance with toggle state and hides it again after retraction', () => {
+    const p = setup(),
+      spread = p.spreads[0],
+      slider = mechanism('slider', { host: 'page-right' });
+    spread.mechanisms.push(slider);
+    const d = object({
+      entrance: {
+        kind: 'grow',
+        driver: { kind: 'slider', target: slider.id },
+        start: 0.2,
+        end: 0.8,
+        distance: 20,
+        easing: 'linear',
+        duration: 1.2,
+      },
+      triggers: [{ id: 'gate', target: 'page-left', action: 'toggle' }],
+    });
+    spread.digital.push(d);
+    const compiled = compileProject(p, spread.id),
+      pose = evaluateSpread(compiled, 180),
+      initial = { ...createDigitalRuntime(), drivers: { [slider.id]: 1 } };
+    expect(evaluateDigitalPresentation(d, pose, initial).visible).toBe(false);
+    const enabled = dispatchDigitalEvent(spread, initial, 'page-left');
+    for (const [value, expected] of [
+      [1, 1],
+      [0.5, 0.5],
+      [0, 0],
+      [0.5, 0.5],
+      [1, 1],
+    ]) {
+      const result = evaluateDigitalPresentation(d, pose, {
+        ...enabled,
+        drivers: { [slider.id]: value },
+      });
+      expect(result.progress).toBeCloseTo(expected, 8);
+      expect(result.visible).toBe(expected > 0);
+    }
+    const disabled = dispatchDigitalEvent(spread, enabled, 'page-left');
+    expect(evaluateDigitalPresentation(d, pose, disabled).visible).toBe(false);
+  });
   it('resets only requested object clocks and generates stable seeded effect values', () => {
     const a = object({ id: 'a', entrance: undefined, motion: { hover: 2, spin: 30 } }),
       b = object({ id: 'b', entrance: undefined }),

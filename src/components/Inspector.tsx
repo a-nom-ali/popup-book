@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import {
   BookOpen,
   Box,
@@ -15,7 +15,8 @@ import type { CompiledSpread, Pose } from '../engine/geometry';
 import type { Mechanism, Project, Vec2 } from '../model';
 import { uid } from '../model';
 import { PRESETS } from '../presets';
-import { assetClipNames } from '../io/assets';
+import DigitalInspector from './DigitalInspector';
+import { validateDigitalObjects } from '../engine/digital';
 import { partTabs } from '../engine/fabrication';
 import { polygonBounds } from '../engine/geometry';
 
@@ -170,21 +171,11 @@ export default function Inspector({
       Object.assign(m, { [key]: value });
       if (['width', 'reach', 'left', 'right', 'beta'].includes(key)) resizeOutlines(m, old);
     });
-  const clips = useMemo(
-    () => assetClipNames(digital ? s.project.assets[digital.assetId] : undefined),
-    [digital?.assetId, s.project.assets],
-  );
-  const digitalUpdate = (key: string, value: unknown) =>
-    digital &&
-    edit('Digital content updated', (sp) =>
-      Object.assign(
-        sp.digital.find((d) => d.id === digital.id)!,
-        { [key]: value },
-      ),
-    );
-  const related = [...s.diagnostics, ...pose.diagnostics].filter((d) =>
-    d.partIds.some((id) => id === s.selectedId || id === mechanism?.id),
-  );
+  const related = [
+    ...s.diagnostics,
+    ...pose.diagnostics,
+    ...validateDigitalObjects(compiled, pose),
+  ].filter((d) => d.partIds.some((id) => id === s.selectedId || id === mechanism?.id));
   const tabs = selected ? partTabs(selected, compiled) : [];
   return (
     <aside className="right-panel">
@@ -224,112 +215,7 @@ export default function Inspector({
       </div>
       {related.length > 0 && <div className="inline-issue">{related[0].message}</div>}
       {digital ? (
-        <>
-          <div className="inspector-section">
-            <h3>Attachment</h3>
-            <TextField
-              label="Model name"
-              value={digital.name}
-              onChange={(v) => digitalUpdate('name', v)}
-            />
-            <label className="select-field">
-              <span>Parent part</span>
-              <select
-                aria-label="Digital parent part"
-                value={digital.parent}
-                onChange={(e) => digitalUpdate('parent', e.target.value)}
-              >
-                {pose.parts.map((p) => (
-                  <option key={p.id} value={p.id}>
-                    {p.name}
-                  </option>
-                ))}
-              </select>
-            </label>
-            {['X', 'Y', 'Z'].map((axis, i) => (
-              <NumberField
-                key={axis}
-                label={`Position ${axis}`}
-                value={digital.position[i]}
-                onChange={(v) => {
-                  const p = [...digital.position];
-                  p[i] = v;
-                  digitalUpdate('position', p);
-                }}
-              />
-            ))}
-            {['X', 'Y', 'Z'].map((axis, i) => (
-              <NumberField
-                key={axis}
-                label={`Rotation ${axis}`}
-                unit="°"
-                value={digital.rotation[i]}
-                onChange={(v) => {
-                  const p = [...digital.rotation];
-                  p[i] = v;
-                  digitalUpdate('rotation', p);
-                }}
-              />
-            ))}
-            <NumberField
-              label="Model scale"
-              value={digital.scale}
-              unit="×"
-              step={0.01}
-              onChange={(v) => digitalUpdate('scale', Math.max(0.00001, v))}
-            />
-          </div>
-          <div className="inspector-section">
-            <h3>Animation</h3>
-            <label className="select-field">
-              <span>Clip</span>
-              <select
-                aria-label="Animation clip"
-                value={digital.clip}
-                disabled={!clips.length}
-                onChange={(e) => digitalUpdate('clip', +e.target.value)}
-              >
-                {clips.length ? (
-                  clips.map((clip, i) => (
-                    <option key={i} value={i}>
-                      {clip}
-                    </option>
-                  ))
-                ) : (
-                  <option>No animation in this model</option>
-                )}
-              </select>
-            </label>
-            <label className="select-field">
-              <span>Playback</span>
-              <select
-                aria-label="Animation playback"
-                value={digital.behavior}
-                onChange={(e) => digitalUpdate('behavior', e.target.value)}
-              >
-                <option value="loop">Loop continuously</option>
-                <option value="click">Play when clicked</option>
-                <option value="angle">Follow book opening</option>
-              </select>
-            </label>
-            {digital.behavior === 'angle' && (
-              <>
-                <NumberField
-                  label="Start angle"
-                  value={digital.angleStart}
-                  unit="°"
-                  onChange={(v) => digitalUpdate('angleStart', v)}
-                />
-                <NumberField
-                  label="End angle"
-                  value={digital.angleEnd}
-                  unit="°"
-                  onChange={(v) => digitalUpdate('angleEnd', v)}
-                />
-              </>
-            )}
-          </div>
-        </>
+        <DigitalInspector object={digital} compiled={compiled} pose={pose} />
       ) : mechanism ? (
         <>
           <div className="inspector-section">

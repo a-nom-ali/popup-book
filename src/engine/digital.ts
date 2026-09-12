@@ -185,8 +185,13 @@ export function evaluateDigitalPresentation(
       progress = clamp((time - event.entranceAt) / entrance.duration, 0, 1);
     if (entrance.easing === 'smooth') progress = progress * progress * (3 - 2 * progress);
   }
-  if (event.toggled !== undefined || object.triggers?.some((t) => t.action === 'toggle'))
-    progress = event.toggled ? 1 : 0;
+  // Toggle is an additional gate, so an enabled slider/hinge entrance still
+  // disappears when its physical driver closes or retracts.
+  if (
+    event.toggled === false ||
+    (object.triggers?.some((t) => t.action === 'toggle') && event.toggled !== true)
+  )
+    progress = 0;
   const hover = (object.motion?.hover ?? 0) * Math.sin(age * Math.PI),
     spin = rad((object.motion?.spin ?? 0) * age);
   const rise = entrance?.kind === 'rise' ? -entrance.distance * (1 - progress) : 0;

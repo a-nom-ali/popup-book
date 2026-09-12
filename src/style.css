@@ -12,6 +12,158 @@
   --paper: #f1f1ea;
   --accent: #e7a679;
 }
+.digital-library {
+  margin: 24px 16px;
+}
+.digital-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+.digital-card {
+  border: 1px solid #465348;
+  border-radius: 8px;
+  background: #303a32;
+  padding: 10px;
+  text-align: left;
+}
+.digital-card-art {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  height: 46px;
+  color: #d9b9f7;
+}
+.digital-1 .digital-card-art {
+  color: #e8ba90;
+}
+.digital-2 .digital-card-art,
+.digital-5 .digital-card-art {
+  color: #8eddd5;
+}
+.digital-3 .digital-card-art,
+.digital-4 .digital-card-art {
+  color: #e3eaa2;
+}
+.digital-card strong {
+  display: block;
+  font-size: 11px;
+  margin: 5px 0;
+}
+.digital-card small {
+  display: block;
+  font-size: 9px;
+  line-height: 1.5;
+  color: #a8b5a6;
+}
+.demos-launch span {
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  text-align: left;
+}
+.demos-launch small {
+  font-size: 9px;
+  opacity: 0.75;
+}
+.property-note {
+  font-size: 10px;
+  color: #a9b8a2;
+  line-height: 1.7;
+}
+.gizmo-options {
+  display: flex;
+  gap: 4px;
+  margin: 14px 0 8px;
+}
+.gizmo-options button {
+  display: flex;
+  align-items: center;
+  gap: 5px;
+  padding: 8px;
+  background: #364135;
+  border-radius: 4px;
+  font-size: 10px;
+}
+.gizmo-options button.active {
+  background: #c7ec9b;
+  color: #233223;
+}
+.model-dimensions {
+  font-size: 12px;
+  color: #d4e7c8;
+  padding: 10px 0;
+  font-variant-numeric: tabular-nums;
+}
+.model-dimensions small {
+  display: block;
+  margin-top: 5px;
+  color: #98aa90;
+  font-size: 9px;
+}
+.trigger-card {
+  margin: 8px 0;
+  border: 1px solid #475742;
+  background: #293626;
+  padding: 12px;
+  border-radius: 6px;
+}
+.trigger-card .item-row {
+  font-size: 11px;
+}
+.digital-controls {
+  color: #dcead4;
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 14px;
+  background: #29342b;
+  border-top: 1px solid #44523e;
+  flex-shrink: 0;
+  font-size: 10px;
+}
+.digital-controls button,
+.digital-controls > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+.digital-controls > button:first-child {
+  border: 1px solid #57674d;
+  border-radius: 4px;
+  padding: 7px 9px;
+}
+.digital-controls.testing {
+  background: #35472e;
+}
+.digital-controls .active {
+  background: #c7ec9b;
+  color: #263721;
+}
+.digital-clock-controls {
+  display: flex;
+  gap: 9px;
+  align-items: center;
+  color: #a8bba0;
+}
+.digital-clock-controls button {
+  padding: 5px;
+}
+.digital-controls .demos-button {
+  margin-left: auto;
+  color: #d6b8f0;
+  padding: 6px;
+}
+@media (max-width: 650px) {
+  .digital-controls {
+    gap: 6px;
+    padding: 7px;
+    flex-wrap: wrap;
+  }
+  .digital-clock-controls > span {
+    display: none;
+  }
+}
 * {
   box-sizing: border-box;
 }
