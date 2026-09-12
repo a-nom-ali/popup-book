@@ -4,6 +4,7 @@ import type { CompiledSpread } from '../engine/geometry';
 import { validateSpread } from '../engine/validation';
 import { useStudio } from '../store';
 import { download, packProject, safeName } from '../io/projects';
+import { useDigitalRuntime } from '../digitalRuntime';
 
 export default function ExportDialog({
   compiled,
@@ -19,7 +20,7 @@ export default function ExportDialog({
   useEffect(() => {
     dialog.current?.showModal();
   }, []);
-  const run = async (type: 'project' | 'svg' | 'pdf' | 'glb' | 'animated') => {
+  const run = async (type: 'project' | 'svg' | 'pdf' | 'glb' | 'animated' | 'digital-demo') => {
     setError('');
     setBusy(type);
     try {
@@ -45,8 +46,12 @@ export default function ExportDialog({
       } else {
         const { exportGLB } = await import('../io/glb');
         download(
-          await exportGLB(compiled, state.angle, type === 'animated', state.drivers),
-          `${name}${type === 'animated' ? '-opening' : ''}.glb`,
+          await exportGLB(compiled, state.angle, type === 'animated', state.drivers, {
+            mode:
+              type === 'animated' ? 'opening' : type === 'digital-demo' ? 'digital-demo' : 'pose',
+            runtime: useDigitalRuntime.getState().getInputs(state.drivers),
+          }),
+          `${name}${type === 'animated' ? '-opening' : type === 'digital-demo' ? '-digital-demo' : ''}.glb`,
           'model/gltf-binary',
         );
       }
@@ -104,13 +109,18 @@ export default function ExportDialog({
         </button>
         <button disabled={!!busy} onClick={() => run('glb')}>
           <Box size={23} />
-          <strong>Current 3D pose</strong>
-          <span>GLB · physical scale in metres</span>
+          <strong>Current pose</strong>
+          <span>GLB · captures digital playback and clicks</span>
         </button>
         <button disabled={!!busy} onClick={() => run('animated')}>
           <Box size={23} />
-          <strong>Animated 3D spread</strong>
-          <span>GLB · six-second opening sequence</span>
+          <strong>Opening animation</strong>
+          <span>GLB · six seconds, pull tabs held in place</span>
+        </button>
+        <button disabled={!!busy} onClick={() => run('digital-demo')}>
+          <Box size={23} />
+          <strong>Digital demonstration</strong>
+          <span>GLB · pull-tab sweep and clicks at one second</span>
         </button>
       </div>
       <label className="paper-select">
@@ -126,7 +136,9 @@ export default function ExportDialog({
       </label>
       <p className="export-note">
         Fabrication exports run a 1° sampled geometry check and include unresolved issues. GLB
-        contains baked motion; editing and click behaviors stay in the project file.
+        contains baked motion; editing and click behaviors stay in the project file. Digital
+        demonstration holds the current opening angle, sweeps linked pull tabs and triggers
+        registered clicks during a six-second preview.
       </p>
       {busy && (
         <div className="busy-message" role="status">

@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
+import type { GLTF } from 'three/addons/loaders/GLTFLoader.js';
+import { clone as cloneSkeleton } from 'three/addons/utils/SkeletonUtils.js';
 import type { CompiledSpread, PaperPart, Pose } from './geometry';
 import { polygonBounds, triangulate } from './geometry';
 import { bytesFromData } from '../io/projects';
 import { inspectGLB } from '../io/assets';
 import type { DigitalObject } from '../model';
+import { evaluateDigitalPresentation, type DigitalRuntimeInputs } from './digital';
+import { createBuiltinModel, type BuiltinModel } from './digitalModels';
 
 export interface MediaAttachment {
   id: string;
@@ -16,6 +20,61 @@ export interface MediaAttachment {
   duration?: number;
   elapsed: number;
   clicked: boolean;
+  bounds?: THREE.Box3;
+  clips?: { name: string; duration: number }[];
+  procedural?: Pick<BuiltinModel, 'evaluate'>;
+}
+const importedModels = new Map<string, { data: string; result: Promise<GLTF> }>();
+/** Decode once per asset revision; callers own independent geometry, materials and mixers. */
+export async function loadDigitalModel(
+  object: DigitalObject,
+  compiled: CompiledSpread,
+): Promise<BuiltinModel> {
+  if (object.source?.kind === 'builtin') return createBuiltinModel(object.source);
+  const assetId = object.source?.kind === 'glb' ? object.source.assetId : object.assetId,
+    asset = compiled.project.assets[assetId];
+  if (!asset?.data) throw new Error('The model asset is missing. Reimport its GLB file.');
+  let cached = importedModels.get(assetId);
+  if (!cached || cached.data !== asset.data) {
+    const bytes = bytesFromData(asset.data);
+    inspectGLB(bytes);
+    cached = {
+      data: asset.data,
+      result: new GLTFLoader().parseAsync(new Uint8Array(bytes).buffer, ''),
+    };
+    importedModels.set(assetId, cached);
+    if (importedModels.size > 4) importedModels.delete(importedModels.keys().next().value!);
+  }
+  const loaded = await cached.result,
+    scene = cloneSkeleton(loaded.scene) as THREE.Group,
+    originalNodes: THREE.Object3D[] = [],
+    clonedNodes: THREE.Object3D[] = [];
+  loaded.scene.traverse((node) => originalNodes.push(node));
+  scene.traverse((node) => clonedNodes.push(node));
+  const clonedIds = new Map(originalNodes.map((node, i) => [node.uuid, clonedNodes[i].uuid]));
+  scene.traverse((node) => {
+    const mesh = node as THREE.Mesh;
+    if (!mesh.isMesh) return;
+    mesh.geometry = mesh.geometry.clone();
+    const copy = (source: THREE.Material) => {
+      const mat = source.clone();
+      for (const key of Object.keys(mat)) {
+        const value = (mat as unknown as Record<string, unknown>)[key];
+        if (value instanceof THREE.Texture)
+          (mat as unknown as Record<string, unknown>)[key] = value.clone();
+      }
+      return mat;
+    };
+    mesh.material = Array.isArray(mesh.material) ? mesh.material.map(copy) : copy(mesh.material);
+  });
+  const animations = loaded.animations.map((clip) => clip.clone());
+  for (const clip of animations)
+    for (const track of clip.tracks) {
+      const dot = track.name.indexOf('.'),
+        target = track.name.slice(0, dot);
+      if (clonedIds.has(target)) track.name = clonedIds.get(target)! + track.name.slice(dot);
+    }
+  return { scene, animations, bounds: new THREE.Box3().setFromObject(scene) };
 }
 export function mountMatrix(part: PaperPart, object: DigitalObject): THREE.Matrix4 {
   const front = part.front ?? 1;
@@ -146,12 +205,9 @@ export async function loadMedia(
   }
   for (const object of compiled.spread.digital) {
     try {
-      const asset = compiled.project.assets[object.assetId],
-        part = pose.parts.find((p) => p.id === object.parent);
-      if (!part || !asset?.data) throw new Error('Missing model or parent part.');
-      const bytes = bytesFromData(asset.data);
-      inspectGLB(bytes);
-      const gltf = await new GLTFLoader().parseAsync(new Uint8Array(bytes).buffer, '');
+      const part = pose.parts.find((p) => p.id === object.parent);
+      if (!part) throw new Error('The paper attachment is missing. Choose another parent.');
+      const gltf = await loadDigitalModel(object, compiled);
       // Namespace imported animation targets so multiple copies do not compete.
       const names = new Map<string, string>();
       gltf.scene.traverse((node) => {
@@ -181,7 +237,7 @@ export async function loadMedia(
       if (action) {
         action.play();
         action.clampWhenFinished = true;
-        if (object.behavior !== 'loop') action.setLoop(THREE.LoopOnce, 1);
+        action.setLoop(THREE.LoopOnce, 1);
       }
       attachments.push({
         id: object.id,
@@ -193,6 +249,9 @@ export async function loadMedia(
         duration: clip?.duration,
         elapsed: 0,
         clicked: false,
+        bounds: gltf.bounds,
+        clips: gltf.animations.map((clip) => ({ name: clip.name, duration: clip.duration })),
+        procedural: gltf.evaluate ? { evaluate: gltf.evaluate } : undefined,
       });
     } catch (error) {
       errors.push(`${object.name}: ${(error as Error).message}`);
@@ -205,11 +264,26 @@ export function updateMedia(
   pose: Pose,
   delta: number,
   absoluteTime?: number,
+  runtimeInputs?: DigitalRuntimeInputs,
+  compiled?: CompiledSpread,
+  objectOverrides?: Record<string, DigitalObject>,
 ) {
   for (const a of attachments) {
+    if (a.digital && compiled) {
+      const current =
+        objectOverrides?.[a.id] ?? compiled.spread.digital.find((object) => object.id === a.id);
+      if (current) {
+        a.digital = current;
+        a.parent = current.parent;
+      }
+    }
     const parent = pose.parts.find((p) => p.id === a.parent);
-    if (!parent) continue;
+    if (!parent) {
+      a.group.visible = false;
+      continue;
+    }
     if (!a.digital) {
+      a.group.visible = true;
       setMatrix(
         a.group,
         parent.matrix
@@ -219,21 +293,23 @@ export function updateMedia(
       continue;
     }
     const d = a.digital;
-    setMatrix(a.group, mountMatrix(parent, d));
-    if (!a.mixer || !a.action || !a.duration) continue;
     if (absoluteTime !== undefined) a.elapsed = absoluteTime;
     else a.elapsed += delta;
-    let time = 0;
-    if (d.behavior === 'angle')
-      time =
-        Math.min(
-          1,
-          Math.max(0, (pose.angle - d.angleStart) / Math.max(1e-6, d.angleEnd - d.angleStart)),
-        ) * a.duration;
-    else if (d.behavior === 'loop') time = a.elapsed % a.duration;
-    else if (a.clicked) time = Math.min(a.elapsed, a.duration);
+    const runtime: DigitalRuntimeInputs = runtimeInputs ?? {
+      time: a.elapsed,
+      drivers: {},
+      events: a.clicked ? { [a.id]: { clipAt: 0 } } : {},
+    };
+    const presentation = evaluateDigitalPresentation(d, pose, runtime, {
+      clipDuration: a.duration,
+      compiled,
+    });
+    setMatrix(a.group, presentation.worldMatrix);
+    a.group.visible = presentation.visible;
+    a.procedural?.evaluate?.(Math.max(0, runtime.time - (runtime.startedAt?.[a.id] ?? 0)));
+    if (!a.mixer || !a.action || !a.duration) continue;
     a.action.enabled = true;
     a.action.paused = false;
-    a.mixer.setTime(time);
+    a.mixer.setTime(presentation.animationTime);
   }
 }
