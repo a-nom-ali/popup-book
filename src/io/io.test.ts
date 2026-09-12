@@ -81,7 +81,7 @@ describe('portable document and editor history', () => {
   });
   it('rejects corrupt, unsupported-version and duplicate-ID projects', () => {
     expect(() => unpackProject(new Uint8Array([1, 2, 3]))).toThrow();
-    expect(() => parseProject({ ...exampleProject(), version: 3 })).toThrow();
+    expect(() => parseProject({ ...exampleProject(), version: 4 })).toThrow();
     const p = exampleProject();
     p.spreads[1].id = p.spreads[0].id;
     expect(() => parseProject(p)).toThrow('duplicate');

@@ -238,7 +238,7 @@ describe('cut-out editor commands and project migration', () => {
     };
     legacy.spreads[0].decorations.push(d);
     const migrated = parseProject(legacy);
-    expect(migrated.version).toBe(2);
+    expect(migrated.version).toBe(3);
     expect(migrated.spreads[0].decorations[0]).toEqual(d);
     useStudio.getState().insertCutout(asset, fixture(), 'page-right');
     const project = useStudio.getState().project;

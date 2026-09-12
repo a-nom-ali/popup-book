@@ -14,6 +14,7 @@ import type { CompiledSpread, PaperPart, Pose } from './geometry';
 import { templateParts, assemblyTabParts } from './fabrication';
 import type { Vec2 } from '../model';
 import { glueRegionValid, regionArea, regionContained } from './cutouts';
+import { validateDigitalObjects } from './digital';
 
 export function validateStatic(compiled: CompiledSpread): Diagnostic[] {
   const pose = evaluateSpread(compiled, 180),
@@ -157,7 +158,7 @@ export function validateStatic(compiled: CompiledSpread): Diagnostic[] {
         ),
       );
   }
-  for (const item of [...compiled.spread.artwork, ...compiled.spread.digital]) {
+  for (const item of compiled.spread.artwork) {
     if (!compiled.project.assets[item.assetId]?.data)
       out.push(
         diagnostic(
@@ -166,7 +167,7 @@ export function validateStatic(compiled: CompiledSpread): Diagnostic[] {
           [item.id],
         ),
       );
-    const parentId = 'partId' in item ? item.partId : item.parent;
+    const parentId = item.partId;
     if (!pose.parts.some((p) => p.id === parentId))
       out.push(
         diagnostic('missing-host', 'An image or digital object has a missing paper parent.', [
@@ -174,18 +175,7 @@ export function validateStatic(compiled: CompiledSpread): Diagnostic[] {
         ]),
       );
   }
-  for (const item of compiled.spread.digital)
-    if (
-      item.behavior === 'angle' &&
-      (item.angleStart < 0 || item.angleEnd > 180 || item.angleEnd <= item.angleStart)
-    )
-      out.push(
-        diagnostic(
-          'animation-range',
-          `${item.name}: use an increasing animation angle range within 0–180°.`,
-          [item.id],
-        ),
-      );
+  out.push(...validateDigitalObjects(compiled, pose));
   for (const decoration of compiled.spread.decorations) {
     const parent = pose.parts.find((p) => p.id === decoration.parent);
     if (!parent) continue; // The geometry compiler already reports missing attachments.

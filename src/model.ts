@@ -76,10 +76,42 @@ export interface DigitalObject {
   position: Vec3;
   rotation: Vec3;
   scale: number;
-  behavior: 'loop' | 'click' | 'angle';
+  behavior: 'loop' | 'click' | 'angle' | 'slider';
   clip: number;
   angleStart: number;
   angleEnd: number;
+  source?: DigitalSource;
+  entrance?: DigitalEntrance;
+  motion?: { hover: number; spin: number };
+  triggers?: DigitalTrigger[];
+  sliderId?: string;
+}
+export const DIGITAL_BUILTINS = [
+  'dragon',
+  'butterfly',
+  'crystal',
+  'fireflies',
+  'sparkles',
+  'portal',
+] as const;
+export type DigitalBuiltin = (typeof DIGITAL_BUILTINS)[number];
+export type DigitalSource =
+  | { kind: 'builtin'; id: DigitalBuiltin; seed?: number; count?: number }
+  | { kind: 'glb'; assetId: string };
+export interface DigitalEntrance {
+  kind: 'reveal' | 'rise' | 'grow';
+  driver: { kind: 'opening' | 'hinge' | 'slider' | 'click'; target?: string };
+  start: number;
+  end: number;
+  distance: number;
+  easing: 'smooth' | 'linear';
+  duration: number;
+}
+export interface DigitalTrigger {
+  id: string;
+  /** ID of the clicked paper part or digital object that activates this object. */
+  target: string;
+  action: 'entrance' | 'clip' | 'toggle';
 }
 export interface Spread {
   id: string;
@@ -99,7 +131,7 @@ export interface Asset {
   data: string;
 }
 export interface Project {
-  version: 2;
+  version: 3;
   id: string;
   name: string;
   pageWidth: number;
@@ -139,8 +171,57 @@ const mechanismSchema = z.object({
   outlines: z.record(z.string(), z.array(point)),
   cutouts: z.record(z.string(), z.array(z.array(point))),
 });
+export const digitalObjectSchema = z.object({
+  id: z.string(),
+  name: z.string(),
+  assetId: z.string(),
+  parent: z.string(),
+  position: vector,
+  rotation: vector,
+  scale: number.positive(),
+  behavior: z.enum(['loop', 'click', 'angle', 'slider']),
+  clip: number.int().nonnegative(),
+  angleStart: number,
+  angleEnd: number,
+  sliderId: z.string().optional(),
+  source: z
+    .discriminatedUnion('kind', [
+      z.object({
+        kind: z.literal('builtin'),
+        id: z.enum(DIGITAL_BUILTINS),
+        seed: number.int().optional(),
+        count: number.int().min(1).max(64).optional(),
+      }),
+      z.object({ kind: z.literal('glb'), assetId: z.string() }),
+    ])
+    .optional(),
+  entrance: z
+    .object({
+      kind: z.enum(['reveal', 'rise', 'grow']),
+      driver: z.object({
+        kind: z.enum(['opening', 'hinge', 'slider', 'click']),
+        target: z.string().optional(),
+      }),
+      start: number,
+      end: number,
+      distance: number,
+      easing: z.enum(['smooth', 'linear']),
+      duration: number.positive(),
+    })
+    .optional(),
+  motion: z.object({ hover: number, spin: number }).optional(),
+  triggers: z
+    .array(
+      z.object({
+        id: z.string(),
+        target: z.string(),
+        action: z.enum(['entrance', 'clip', 'toggle']),
+      }),
+    )
+    .optional(),
+});
 export const projectSchema = z.object({
-  version: z.literal(2),
+  version: z.literal(3),
   id: z.string(),
   name: z.string(),
   pageWidth: number.positive().max(2000),
@@ -206,21 +287,7 @@ export const projectSchema = z.object({
             height: number.positive(),
           }),
         ),
-        digital: z.array(
-          z.object({
-            id: z.string(),
-            name: z.string(),
-            assetId: z.string(),
-            parent: z.string(),
-            position: vector,
-            rotation: vector,
-            scale: number.positive(),
-            behavior: z.enum(['loop', 'click', 'angle']),
-            clip: number.int().nonnegative(),
-            angleStart: number,
-            angleEnd: number,
-          }),
-        ),
+        digital: z.array(digitalObjectSchema),
       }),
     )
     .min(1)
@@ -230,8 +297,11 @@ export function parseProject(input: unknown): Project {
   // Version 1 used the same panel and artwork coordinate frames. No geometric
   // migration is necessary, and leaving optional fields absent preserves it.
   const migrated =
-    input && typeof input === 'object' && 'version' in input && input.version === 1
-      ? { ...input, version: 2 }
+    input &&
+    typeof input === 'object' &&
+    'version' in input &&
+    (input.version === 1 || input.version === 2)
+      ? { ...input, version: 3 }
       : input;
   const project = projectSchema.parse(migrated) as Project;
   const ids = [

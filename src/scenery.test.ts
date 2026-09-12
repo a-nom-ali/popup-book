@@ -10,7 +10,7 @@ import { glueRegionValid, regionContained } from './engine/cutouts';
 
 function projectFor(spread: Spread, assets: Project['assets'], pageHeight = 210): Project {
   return {
-    version: 2,
+    version: 3,
     id: 'scenery-fixture',
     name: 'Scenery fixture',
     pageWidth: 148,
